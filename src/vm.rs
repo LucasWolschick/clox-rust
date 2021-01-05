@@ -1,11 +1,5 @@
-use super::{Chunk, OpCode, Value};
+use super::{Chunk, OpCode, Value, InterpretResult};
 use super::debug;
-
-pub enum InterpretResult {
-    Ok,
-    CompileError,
-    RuntimeError,
-}
 
 pub struct VM {
     chunk: Chunk,
@@ -51,7 +45,7 @@ impl VM {
                 OpCode::Return => {
                     let constant = self.stack.pop().unwrap();
                     println!("{}", constant);
-                    return InterpretResult::Ok;
+                    return Ok(());
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
