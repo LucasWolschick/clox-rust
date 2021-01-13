@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::HashSet;
+use super::{HashSet, HashTable};
 
 use super::{InterpretResult, InterpretError};
 use super::opcodes::OpCode;
@@ -15,6 +15,7 @@ pub struct VM {
     stack: Vec<Value>,
     strings: HashSet<Rc<String>>,
     objects: Vec<ObjectReference>,
+    globals: HashTable<Rc<String>, Value>,
 }
 
 impl VM {
@@ -26,6 +27,7 @@ impl VM {
             stack: Vec::new(),
             objects: Vec::new(),
             strings: HashSet::default(),
+            globals: HashTable::default(),
         }
     }
 
@@ -62,6 +64,62 @@ impl VM {
                     let _ = self.stack.pop();
                 }
                 OpCode::Nop => (),
+                OpCode::DefineGlobal => {
+                    let name = self.read_constant();
+                    if let Constant::String(r) = name {
+                        let r = r.clone();
+                        let rc = self.allocate_string(r);
+                        let val = self.peek_stack(0).unwrap().clone();
+                        self.globals.insert(rc, val);
+                        self.stack.pop();
+                    } else {
+                        self.runtime_error("Attempt to define non-string global");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::DefineLongGlobal => {
+                    let name = self.read_long_constant();
+                    if let Constant::String(r) = name {
+                        let r = r.clone();
+                        let rc = self.allocate_string(r);
+                        let val = self.peek_stack(0).unwrap().clone();
+                        self.globals.insert(rc, val);
+                        self.stack.pop();
+                    } else {
+                        self.runtime_error("Attempt to define non-string global");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::GetGlobal => {
+                    let name = self.read_constant();
+                    if let Constant::String(r) = name {
+                        let r = r.clone();
+                        let rc = self.allocate_string(r);
+                        if self.globals.get(&rc).is_none() {
+                            self.runtime_error(format!("Undefined variable '{}'", &rc).as_str());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                        self.stack.push(self.globals.get(&rc).unwrap().clone());
+                    } else {
+                        self.runtime_error("Attempt to get non-string global");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::GetLongGlobal => {
+                    let name = self.read_long_constant();
+                    if let Constant::String(r) = name {
+                        let r = r.clone();
+                        let rc = self.allocate_string(r);
+                        if self.globals.get(&rc).is_none() {
+                            self.runtime_error(format!("Undefined variable '{}'", &rc).as_str());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                        self.stack.push(self.globals.get(&rc).unwrap().clone());
+                    } else {
+                        self.runtime_error("Attempt to get non-string global");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
                     let val = self.constant_to_value(&constant);
@@ -211,7 +269,7 @@ impl VM {
         }
     }
 
-    fn peek_stack(&mut self, distance: usize) -> Option<&Value> {
+    fn peek_stack(&self, distance: usize) -> Option<&Value> {
         self.stack.iter().nth_back(distance)
     }
 

@@ -74,8 +74,8 @@ impl Compiler {
         self.chunk.write_op(opcode, self.previous.line);
     }
 
-    fn emit_constant(&mut self, constant: Constant) -> usize {
-        let i = self.chunk.write_constant(constant, self.previous.line);
+    fn make_constant(&mut self, constant: Constant) -> usize {
+        let i = self.chunk.register_constant(constant, self.previous.line);
         if let Ok(i) = i {
             i
         } else {
@@ -84,12 +84,60 @@ impl Compiler {
         }
     }
 
+    fn emit_constant(&mut self, constant: Constant) -> usize {
+        let i = self.make_constant(constant);
+        if i > u8::MAX as usize {
+            self.emit_opcode(OpCode::LongConstant);
+            self.emit_usize(i);
+        } else {
+            self.emit_opcode(OpCode::Constant);
+            self.emit_byte(i as u8);
+        }
+        i
+    }
+
     // parser
     fn declaration(&mut self) {
-        self.statement();
+        if self.match_advance(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.statement();
+        }
 
         if self.panic_mode {
             self.synchronize();
+        }
+    }
+    
+    fn var_declaration(&mut self) {
+        let global = self.parse_variable("Expected variable name");
+
+        if self.match_advance(TokenType::Equal) {
+            self.expression();
+        } else {
+            self.emit_opcode(OpCode::Nil);
+        }
+
+        self.consume(TokenType::Semicolon, "Expected ';' after variable declaration");
+        self.define_variable(global);
+    }
+
+    fn parse_variable(&mut self, err: &str) -> usize {
+        self.consume(TokenType::Identifier, err);
+        self.identifier_constant(&self.previous.clone())
+    }
+
+    fn identifier_constant(&mut self, token: &Token) -> usize {
+        self.make_constant(Constant::String(token.lexeme.clone()))
+    }
+
+    fn define_variable(&mut self, global: usize) {
+        if global > u8::MAX as usize {
+            self.emit_opcode(OpCode::DefineLongGlobal);
+            self.emit_usize(global);
+        } else {
+            self.emit_opcode(OpCode::DefineGlobal);
+            self.emit_byte(global as u8);
         }
     }
 
@@ -187,6 +235,21 @@ impl Compiler {
         }
     }
 
+    fn variable(&mut self) {
+        self.named_variable(&self.previous.clone());
+    }
+
+    fn named_variable(&mut self, name: &Token) {
+        let arg = self.identifier_constant(&name);
+        if arg > u8::MAX as usize {
+            self.emit_opcode(OpCode::GetLongGlobal);
+            self.emit_usize(arg);
+        } else {
+            self.emit_opcode(OpCode::GetGlobal);
+            self.emit_byte(arg as u8);
+        }
+    }
+
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
         
@@ -227,6 +290,7 @@ impl Compiler {
             TokenType::Greater      => ParseRule(None, Some(Self::binary), Precedence::Comparison),
             TokenType::Less         => ParseRule(None, Some(Self::binary), Precedence::Comparison),
             TokenType::String       => ParseRule(Some(Self::string), None, Precedence::None),
+            TokenType::Identifier   => ParseRule(Some(Self::variable), None, Precedence::None),
             _                       => ParseRule(None, None, Precedence::None),
         }
     }

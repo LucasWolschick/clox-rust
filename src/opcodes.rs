@@ -3,6 +3,12 @@
 pub enum OpCode {
     Constant,
     LongConstant,
+
+    DefineGlobal,
+    DefineLongGlobal,
+
+    GetGlobal,
+    GetLongGlobal,
     
     Pop,
     
