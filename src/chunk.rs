@@ -1,10 +1,28 @@
-use super::OpCode;
-use super::Value;
-use super::value::ValueArray;
+use super::opcodes::OpCode;
+
+// compile-time constant types. these are converted to Value during runtime.
+#[derive(Clone, PartialEq)]
+pub enum Constant {
+    String(String),
+    Number(f64),
+    Bool(bool),
+    Nil,
+}
+
+impl std::fmt::Display for Constant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::String(s) => f.write_str(s.as_str()),
+            Self::Number(n) => f.write_str(n.to_string().as_str()),
+            Self::Bool(b) => f.write_str(b.to_string().as_str()),
+            Self::Nil => f.write_str("nil"),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Chunk {
-    constants: ValueArray,
+    constants: Vec<Constant>,
     lines: Vec<(isize, usize)>,
     code: Vec<u8>,
 }
@@ -14,7 +32,7 @@ impl Chunk {
         Chunk {
             code: Vec::new(),
             lines: Vec::new(),
-            constants: ValueArray::new(),
+            constants: Vec::new(),
         }
     }
 
@@ -37,12 +55,12 @@ impl Chunk {
         self.write(opcode.into(), line);
     }
 
-    pub fn write_constant(&mut self, value: Value, line: isize) -> Result<usize, ()> {
-        if self.constants.count() >= isize::MAX as usize {
+    pub fn write_constant(&mut self, constant: Constant, line: isize) -> Result<usize, ()> {
+        if self.constants.len() >= isize::MAX as usize {
             return Err(())
         }
 
-        let i = self.add_constant(value);
+        let i = self.add_constant(constant);
         if i > u8::MAX as usize {
             self.write_op(OpCode::LongConstant, line);
             self.write_usize(i, line);
@@ -53,13 +71,13 @@ impl Chunk {
         Ok(i)
     }
 
-    pub fn add_constant(&mut self, value: Value) -> usize {
-        self.constants.write(value);
-        self.constants.count() - 1
+    pub fn add_constant(&mut self, constant: Constant) -> usize {
+        self.constants.push(constant);
+        self.constants.len() - 1
     }
 
-    pub fn get_constant(&self, offset: usize) -> &Value {
-        self.constants.at(offset)
+    pub fn get_constant(&self, offset: usize) -> &Constant {
+        &self.constants[offset]
     }
 
     pub fn line_at_offset(&self, offset: usize) -> isize {

@@ -1,18 +1,24 @@
-#[derive(Clone)]
+use std::rc::Rc;
+
+#[derive(Clone, PartialEq)]
 pub enum Value {
     Number(f64),
     Bool(bool),
+    Object(ObjectReference),
     Nil,
 }
 
-impl PartialEq for Value {
-    fn eq(&self, other: &Self) -> bool {
-        use Value::*;
-        match (self, other) {
-            (Bool(a), Bool(b)) => a == b,
-            (Number(a), Number(b)) => a == b,
-            (Nil, Nil) => true,
-            _ => false,
+pub type ObjectReference = Rc<ObjectValue>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectValue {
+    String(String),
+}
+
+impl std::fmt::Display for ObjectValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::String(s) => f.write_str(s.as_str()),
         }
     }
 }
@@ -38,36 +44,8 @@ impl std::fmt::Display for Value {
         match self {
             Value::Number(n) => f.write_str(n.to_string().as_str()),
             Value::Bool(b) => f.write_str(b.to_string().as_str()),
+            Value::Object(o) => f.write_str(o.to_string().as_str()),
             Value::Nil => f.write_str("nil"),
         }
-    }
-}
-
-#[derive(Default)]
-pub struct ValueArray {
-    values: Vec<Value>,
-}
-
-impl ValueArray {
-    pub fn new() -> ValueArray {
-        ValueArray {
-            values: Vec::new()
-        }
-    }
-
-    pub fn write(&mut self, value: Value) {
-        self.values.push(value);
-    }
-
-    pub fn clear(&mut self) {
-        self.values.clear();
-    }
-
-    pub fn count(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn at(&self, i: usize) -> &Value {
-        &self.values[i]
     }
 }

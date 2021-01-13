@@ -1,4 +1,7 @@
-use super::{Chunk, Value, OpCode, Scanner, Token, TokenType, InterpretError};
+use super::InterpretError;
+use super::opcodes::OpCode;
+use super::scanner::{Scanner, Token, TokenType};
+use super::chunk::{Chunk, Constant};
 
 struct Compiler {
     scanner: Scanner,
@@ -71,7 +74,7 @@ impl Compiler {
         self.chunk.write_op(opcode, self.previous.line);
     }
 
-    fn emit_constant(&mut self, constant: Value) -> usize {
+    fn emit_constant(&mut self, constant: Constant) -> usize {
         let i = self.chunk.write_constant(constant, self.previous.line);
         if let Ok(i) = i {
             i
@@ -164,7 +167,14 @@ impl Compiler {
     
     fn number(&mut self) {
         let value = self.previous.lexeme.parse::<f64>().unwrap_or_default();
-        let value = Value::Number(value);
+        let value = Constant::Number(value);
+        self.emit_constant(value);
+    }
+
+    fn string(&mut self) {
+        let len = self.previous.lexeme.len();
+        let value = self.previous.lexeme.chars().skip(1).take(len-2).collect();
+        let value = Constant::String(value);
         self.emit_constant(value);
     }
 
@@ -216,6 +226,7 @@ impl Compiler {
             TokenType::GreaterEqual => ParseRule(None, Some(Self::binary), Precedence::Comparison),
             TokenType::Greater      => ParseRule(None, Some(Self::binary), Precedence::Comparison),
             TokenType::Less         => ParseRule(None, Some(Self::binary), Precedence::Comparison),
+            TokenType::String       => ParseRule(Some(Self::string), None, Precedence::None),
             _                       => ParseRule(None, None, Precedence::None),
         }
     }

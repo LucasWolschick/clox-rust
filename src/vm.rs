@@ -1,6 +1,9 @@
-use crate::InterpretError;
+use std::rc::Rc;
 
-use super::{Chunk, OpCode, Value, InterpretResult};
+use super::{InterpretResult, InterpretError};
+use super::opcodes::OpCode;
+use super::value::{Value, ObjectValue, ObjectReference};
+use super::chunk::{Chunk, Constant};
 use super::debug;
 
 pub struct VM {
@@ -8,6 +11,7 @@ pub struct VM {
     ip: usize,
     debug: bool,
     stack: Vec<Value>,
+    objects: Vec<ObjectReference>,
 }
 
 impl VM {
@@ -17,6 +21,7 @@ impl VM {
             ip: 0,
             debug: false,
             stack: Vec::new(),
+            objects: Vec::new(),
         }
     }
 
@@ -55,11 +60,13 @@ impl VM {
                 OpCode::Nop => (),
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
-                    self.stack.push(constant);
+                    let val = self.constant_to_value(&constant);
+                    self.stack.push(val);
                 }
                 OpCode::LongConstant => {
                     let constant = self.read_long_constant().clone();
-                    self.stack.push(constant);
+                    let val = self.constant_to_value(&constant);
+                    self.stack.push(val);
                 }
                 OpCode::Negate => {
                     if let Value::Number(n) = self.stack.last_mut().unwrap() {
@@ -76,11 +83,24 @@ impl VM {
                 OpCode::Add => {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
-                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
-                        self.stack.push(Value::Number(l+r));
-                    } else {
-                        self.runtime_error("Operands must be two numbers or two strings");
-                        return Err(InterpretError::RuntimeError);
+                    match (lhs, rhs) {
+                        (Value::Number(l), Value::Number(r)) => self.stack.push(Value::Number(l+r)),
+                        (Value::Object(l), Value::Object(r)) => {
+                            if let (ObjectValue::String(l), ObjectValue::String(r)) = (&*l, &*r) {
+                                let mut result = l.clone();
+                                result.push_str(&r);
+                                let string = self.allocate_string(result);
+                                let value = Value::Object(string);
+                                self.stack.push(value);
+                            } else {
+                                self.runtime_error("Operands must be two numbers or two strings");
+                                return Err(InterpretError::RuntimeError);
+                            };
+                        }
+                        _ => {
+                            self.runtime_error("Operands must be two numbers or two strings");
+                            return Err(InterpretError::RuntimeError);
+                        }
                     }
                 }
                 OpCode::Subtract => {
@@ -156,16 +176,34 @@ impl VM {
         *self.chunk.at(self.ip - 1)
     }
 
-    fn read_constant(&mut self) -> &Value {
+    fn allocate_string(&mut self, string: String) -> ObjectReference {
+        let rc = Rc::new(ObjectValue::String(string));
+        self.objects.push(rc.clone());
+        rc
+    }
+
+    fn read_constant(&mut self) -> &Constant {
         let constant = self.read_byte() as usize;
         self.chunk.get_constant(constant)
     }
 
-    fn read_long_constant(&mut self) -> &Value {
+    fn read_long_constant(&mut self) -> &Constant {
         let constant = self.read_byte() as usize  // first byte
         | (self.read_byte() as usize) << 8 // second byte
         | (self.read_byte() as usize) << 16; // third byte
         self.chunk.get_constant(constant)
+    }
+
+    fn constant_to_value(&mut self, constant: &Constant) -> Value {
+        match constant {
+            Constant::String(s) => {
+                let string = self.allocate_string(s.clone());
+                Value::Object(string)
+            }
+            Constant::Number(n) => Value::Number(*n),
+            Constant::Bool(b) => Value::Bool(*b),
+            Constant::Nil => Value::Nil
+        }
     }
 
     fn peek_stack(&mut self, distance: usize) -> Option<&Value> {

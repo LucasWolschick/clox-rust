@@ -9,12 +9,10 @@ mod scanner;
 mod value;
 mod vm;
 
+use fnv::FnvHashMap as HashTable;
+use fnv::FnvHashSet as HashSet;
+
 use std::{fs::File, io::{Read, Write}};
-use chunk::Chunk;
-use opcodes::OpCode;
-use value::Value;
-use scanner::{Scanner, Token, TokenType};
-use vm::VM;
 
 pub type InterpretResult = Result<(), InterpretError>;
 pub enum InterpretError {
@@ -45,7 +43,7 @@ pub fn file(mut file: File) {
 
 fn interpret(source: &str) -> InterpretResult {
     let chunk = compiler::compile(source)?;
-    let mut vm = VM::new(chunk); //todo: persist state
+    let mut vm = vm::VM::new(chunk); //todo: persist state
     vm.debug(false);
     vm.interpret()
 }
