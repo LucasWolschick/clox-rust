@@ -1,8 +1,10 @@
 use std::rc::Rc;
 
+use super::HashSet;
+
 use super::{InterpretResult, InterpretError};
 use super::opcodes::OpCode;
-use super::value::{Value, ObjectValue, ObjectReference};
+use super::value::{Value, ObjectReference, StringReference};
 use super::chunk::{Chunk, Constant};
 use super::debug;
 
@@ -11,6 +13,7 @@ pub struct VM {
     ip: usize,
     debug: bool,
     stack: Vec<Value>,
+    strings: HashSet<Rc<String>>,
     objects: Vec<ObjectReference>,
 }
 
@@ -22,6 +25,7 @@ impl VM {
             debug: false,
             stack: Vec::new(),
             objects: Vec::new(),
+            strings: HashSet::default(),
         }
     }
 
@@ -85,17 +89,11 @@ impl VM {
                     let lhs = self.stack.pop().unwrap();
                     match (lhs, rhs) {
                         (Value::Number(l), Value::Number(r)) => self.stack.push(Value::Number(l+r)),
-                        (Value::Object(l), Value::Object(r)) => {
-                            if let (ObjectValue::String(l), ObjectValue::String(r)) = (&*l, &*r) {
-                                let mut result = l.clone();
-                                result.push_str(&r);
-                                let string = self.allocate_string(result);
-                                let value = Value::Object(string);
-                                self.stack.push(value);
-                            } else {
-                                self.runtime_error("Operands must be two numbers or two strings");
-                                return Err(InterpretError::RuntimeError);
-                            };
+                        (Value::String(l), Value::String(r)) => {
+                            let mut result = String::clone(&l);
+                            result.push_str(&r);
+                            let string = self.allocate_string(result);
+                            self.stack.push(Value::String(string));
                         }
                         _ => {
                             self.runtime_error("Operands must be two numbers or two strings");
@@ -136,7 +134,11 @@ impl VM {
                 OpCode::Equal => {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
-                    self.stack.push(Value::Bool(lhs == rhs));
+                    if let (Value::String(l), Value::String(r)) = (&rhs, &lhs) {
+                        self.stack.push(Value::Bool(Rc::ptr_eq(l, r)));
+                    } else {
+                        self.stack.push(Value::Bool(lhs == rhs));
+                    }
                 }
                 OpCode::Less => {
                     let rhs = self.stack.pop().unwrap();
@@ -176,10 +178,14 @@ impl VM {
         *self.chunk.at(self.ip - 1)
     }
 
-    fn allocate_string(&mut self, string: String) -> ObjectReference {
-        let rc = Rc::new(ObjectValue::String(string));
-        self.objects.push(rc.clone());
-        rc
+    fn allocate_string(&mut self, string: String) -> StringReference {
+        if let Some(r) = self.strings.get(&string) {
+            Rc::clone(r)
+        } else {
+            let rc = Rc::new(string);
+            self.strings.insert(rc.clone());
+            rc
+        }
     }
 
     fn read_constant(&mut self) -> &Constant {
@@ -198,10 +204,9 @@ impl VM {
         match constant {
             Constant::String(s) => {
                 let string = self.allocate_string(s.clone());
-                Value::Object(string)
+                Value::String(string)
             }
             Constant::Number(n) => Value::Number(*n),
-            Constant::Bool(b) => Value::Bool(*b),
             Constant::Nil => Value::Nil
         }
     }

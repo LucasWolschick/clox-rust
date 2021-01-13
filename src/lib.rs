@@ -1,5 +1,4 @@
-#![deny(clippy::all, clippy::pedantic)]
-#![allow(clippy::module_name_repetitions, clippy::too_many_lines, clippy::match_same_arms, clippy::cast_possible_truncation, clippy::enum_glob_use, clippy::cast_precision_loss)]
+#![deny(clippy::all)]
 
 mod chunk;
 mod compiler;

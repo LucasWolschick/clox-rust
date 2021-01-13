@@ -5,7 +5,6 @@ use super::opcodes::OpCode;
 pub enum Constant {
     String(String),
     Number(f64),
-    Bool(bool),
     Nil,
 }
 
@@ -14,7 +13,6 @@ impl std::fmt::Display for Constant {
         match self {
             Self::String(s) => f.write_str(s.as_str()),
             Self::Number(n) => f.write_str(n.to_string().as_str()),
-            Self::Bool(b) => f.write_str(b.to_string().as_str()),
             Self::Nil => f.write_str("nil"),
         }
     }
