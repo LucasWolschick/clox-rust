@@ -2,7 +2,7 @@ pub struct Scanner {
     src: Vec<char>,
     start: usize,
     current: usize,
-    line: usize,
+    line: isize,
 }
 
 impl Scanner {
@@ -12,6 +12,23 @@ impl Scanner {
             start: 0,
             current: 0,
             line: 1,
+        }
+    }
+
+    pub fn _debug(mut self) {
+        let mut line = 0;
+        loop {
+            let token = self.scan();
+            if token.line == line {
+                print!("   | ");
+            } else {
+                line = token.line;
+                print!("{:4} ", line);
+            }
+            println!("{:2} '{}'", token.token_type as isize, token.lexeme);
+            if token.token_type == TokenType::Eof {
+                break;
+            }
         }
     }
 
@@ -207,13 +224,14 @@ impl Scanner {
     }
 }
 
+#[derive(Clone)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
-    pub line: usize,
+    pub line: isize,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TokenType {
     // 1 char
     LeftParen, RightParen, LeftBrace, RightBrace,

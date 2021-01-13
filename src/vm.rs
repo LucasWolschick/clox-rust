@@ -1,3 +1,5 @@
+use crate::InterpretError;
+
 use super::{Chunk, OpCode, Value, InterpretResult};
 use super::debug;
 
@@ -26,8 +28,6 @@ impl VM {
         self.run()
     }
 
-    // remove this attribute when we add other types
-    #[allow(irrefutable_let_patterns)]
     fn run(&mut self) -> InterpretResult {
         loop {
             let instruction = self.read_byte();
@@ -42,11 +42,17 @@ impl VM {
             }
 
             match OpCode::from(instruction) {
-                OpCode::Return => {
-                    let constant = self.stack.pop().unwrap();
-                    println!("{}", constant);
+                OpCode::Return => { 
                     return Ok(());
                 }
+                OpCode::Print => {
+                    let constant = self.stack.pop().unwrap();
+                    println!("{}", constant);    
+                }
+                OpCode::Pop => {
+                    let _ = self.stack.pop();
+                }
+                OpCode::Nop => (),
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
                     self.stack.push(constant);
@@ -58,45 +64,89 @@ impl VM {
                 OpCode::Negate => {
                     if let Value::Number(n) = self.stack.last_mut().unwrap() {
                         *n = -*n;
+                    } else {
+                        self.runtime_error("Operand must be a number");
+                        return Err(InterpretError::RuntimeError);
                     }
+                }
+                OpCode::Not => {
+                    let v = self.stack.last_mut().unwrap();
+                    *v = Value::Bool(v.is_falsey());
                 }
                 OpCode::Add => {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
-                    if let Value::Number(r) = rhs {
-                        if let Value::Number(l) = lhs {
-                            self.stack.push(Value::Number(r+l));
-                        }
+                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
+                        self.stack.push(Value::Number(l+r));
+                    } else {
+                        self.runtime_error("Operands must be two numbers or two strings");
+                        return Err(InterpretError::RuntimeError);
                     }
                 }
                 OpCode::Subtract => {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
-                    if let Value::Number(r) = rhs {
-                        if let Value::Number(l) = lhs {
-                            self.stack.push(Value::Number(r-l));
-                        }
+                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
+                        self.stack.push(Value::Number(l-r));
+                    } else {
+                        self.runtime_error("Operands must be numbers");
+                        return Err(InterpretError::RuntimeError);
                     }
                 }
                 OpCode::Multiply => {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
-                    if let Value::Number(r) = rhs {
-                        if let Value::Number(l) = lhs {
-                            self.stack.push(Value::Number(r*l));
-                        }
+                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
+                        self.stack.push(Value::Number(l*r));
+                    } else {
+                        self.runtime_error("Operands must be numbers");
+                        return Err(InterpretError::RuntimeError);
                     }
                 }
                 OpCode::Divide => {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
-                    if let Value::Number(r) = rhs {
-                        if let Value::Number(l) = lhs {
-                            self.stack.push(Value::Number(r/l));
-                        }
+                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
+                        self.stack.push(Value::Number(l/r));
+                    } else {
+                        self.runtime_error("Operands must be numbers");
+                        return Err(InterpretError::RuntimeError);
                     }
                 }
-                OpCode::Nop => ()
+                OpCode::Equal => {
+                    let rhs = self.stack.pop().unwrap();
+                    let lhs = self.stack.pop().unwrap();
+                    self.stack.push(Value::Bool(lhs == rhs));
+                }
+                OpCode::Less => {
+                    let rhs = self.stack.pop().unwrap();
+                    let lhs = self.stack.pop().unwrap();
+                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
+                        self.stack.push(Value::Bool(l<r));
+                    } else {
+                        self.runtime_error("Operands must be numbers");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::Greater => {
+                    let rhs = self.stack.pop().unwrap();
+                    let lhs = self.stack.pop().unwrap();
+                    if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
+                        self.stack.push(Value::Bool(l>r));
+                    } else {
+                        self.runtime_error("Operands must be numbers");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::Nil => {
+                    self.stack.push(Value::Nil)
+                }
+                OpCode::True => {
+                    self.stack.push(Value::Bool(true))
+                }
+                OpCode::False => {
+                    self.stack.push(Value::Bool(false))
+                }
             }
         }
     }
@@ -116,5 +166,14 @@ impl VM {
         | (self.read_byte() as usize) << 8 // second byte
         | (self.read_byte() as usize) << 16; // third byte
         self.chunk.get_constant(constant)
+    }
+
+    fn peek_stack(&mut self, distance: usize) -> Option<&Value> {
+        self.stack.iter().nth_back(distance)
+    }
+
+    fn runtime_error(&mut self, err: &str) {
+        eprintln!("{}\n[line {}] in script", err, self.chunk.line_at_offset(self.ip));
+        self.stack.clear();
     }
 }

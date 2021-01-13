@@ -27,21 +27,30 @@ impl Chunk {
         }
     }
 
-    pub fn write_o(&mut self, opcode: OpCode, line: isize) {
+    pub fn write_usize(&mut self, bytes: usize, line: isize) {
+        self.write(bytes as u8, line); // first byte
+        self.write((bytes >> 8) as u8, line); // second byte
+        self.write((bytes >> 16) as u8, line); // third byte
+    }
+
+    pub fn write_op(&mut self, opcode: OpCode, line: isize) {
         self.write(opcode.into(), line);
     }
 
-    pub fn write_constant(&mut self, value: Value, line: isize) {
+    pub fn write_constant(&mut self, value: Value, line: isize) -> Result<usize, ()> {
+        if self.constants.count() >= isize::MAX as usize {
+            return Err(())
+        }
+
         let i = self.add_constant(value);
         if i > u8::MAX as usize {
-            self.write_o(OpCode::LongConstant, line);
-            self.write(i as u8, line); // first byte
-            self.write((i >> 8) as u8, line); // second byte
-            self.write((i >> 16) as u8, line); // third byte
+            self.write_op(OpCode::LongConstant, line);
+            self.write_usize(i, line);
         } else {
-            self.write_o(OpCode::Constant, line);
+            self.write_op(OpCode::Constant, line);
             self.write(i as u8, line);
         }
+        Ok(i)
     }
 
     pub fn add_constant(&mut self, value: Value) -> usize {
@@ -55,7 +64,7 @@ impl Chunk {
 
     pub fn line_at_offset(&self, offset: usize) -> isize {
         let mut accum = offset;
-        for (line, count) in self.lines.iter() {
+        for (line, count) in &self.lines {
             if &accum <= count {
                 return *line;
             } else {

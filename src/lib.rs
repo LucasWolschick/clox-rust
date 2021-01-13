@@ -1,3 +1,6 @@
+#![deny(clippy::all, clippy::pedantic)]
+#![allow(clippy::module_name_repetitions, clippy::too_many_lines, clippy::match_same_arms, clippy::cast_possible_truncation, clippy::enum_glob_use, clippy::cast_precision_loss)]
+
 mod chunk;
 mod compiler;
 mod debug;
@@ -10,15 +13,8 @@ use std::{fs::File, io::{Read, Write}};
 use chunk::Chunk;
 use opcodes::OpCode;
 use value::Value;
-use scanner::{Scanner, TokenType};
+use scanner::{Scanner, Token, TokenType};
 use vm::VM;
-
-// pub fn test() {
-//     let chunk = compiler::test();
-//     let mut vm = VM::new(chunk);
-//     vm.debug(true);
-//     vm.interpret();
-// }
 
 pub type InterpretResult = Result<(), InterpretError>;
 pub enum InterpretError {
@@ -44,24 +40,12 @@ pub fn repl() {
 pub fn file(mut file: File) {
     let mut src = String::new();
     file.read_to_string(&mut src).unwrap();
-    let result = interpret(src.as_str());
+    let _result = interpret(src.as_str());
 }
 
 fn interpret(source: &str) -> InterpretResult {
-    let mut scanner = Scanner::new(source);
-    let mut line = 0;
-    loop {
-        let token = scanner.scan();
-        if token.line != line {
-            line = token.line;
-            print!("{:4} ", line);
-        } else {
-            print!("   | ");
-        }
-        println!("{:2} '{}'", token.token_type as isize, token.lexeme);
-        if token.token_type == TokenType::Eof {
-            break;
-        }
-    }
-    Ok(())
+    let chunk = compiler::compile(source)?;
+    let mut vm = VM::new(chunk); //todo: persist state
+    vm.debug(false);
+    vm.interpret()
 }
