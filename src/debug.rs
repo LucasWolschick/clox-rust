@@ -49,6 +49,12 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::SetLongGlobal => {
             long_constant_instruction("OP_SET_GLOBAL_LONG", &chunk, offset)
         }
+        OpCode::GetLocal => {
+            byte_instruction("OP_GET_LOCAL", &chunk, offset)
+        }
+        OpCode::SetLocal => {
+            byte_instruction("OP_SET_LOCAL", &chunk, offset)
+        }
         OpCode::Negate => {
             simple_instruction("OP_NEGATE", offset)
         }
@@ -100,6 +106,11 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 fn simple_instruction(title: &str, offset: usize) -> usize {
     println!("{}", title);
     offset + 1
+}
+
+fn byte_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {
+    println!("{:16} {:4}", title, *chunk.at(offset + 1));
+    offset + 2
 }
 
 fn constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {

@@ -12,6 +12,9 @@ pub enum OpCode {
 
     SetGlobal,
     SetLongGlobal,
+
+    GetLocal,
+    SetLocal,
     
     Pop,
     

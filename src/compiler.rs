@@ -3,6 +3,83 @@ use super::opcodes::OpCode;
 use super::scanner::{Scanner, Token, TokenType};
 use super::chunk::{Chunk, Constant};
 
+struct Local {
+    name: Token,
+    depth: isize,
+}
+
+struct Resolver {
+    locals: Vec<Local>,
+    depth: isize,
+}
+
+impl Resolver {
+    pub fn new() -> Self {
+        Resolver {
+            locals: Vec::new(),
+            depth: 0,
+        }
+    }
+
+    pub fn begin_scope(&mut self) {
+        self.depth += 1;
+    }
+
+    #[must_use]
+    /// Returns the number of pop instructions which must be emitted.
+    pub fn end_scope(&mut self) -> isize {
+        self.depth -= 1;
+
+        let mut count = 0;
+        while !self.locals.is_empty() && self.locals.last().unwrap().depth > self.depth {
+            count += 1;
+            self.locals.pop();
+        }
+
+        count
+    }
+
+    pub fn depth(&self) -> isize {
+        self.depth
+    }
+
+    pub fn n_locals(&self) -> usize {
+        self.locals.len()
+    }
+
+    pub fn add_local(&mut self, name: Token) -> Result<(),()> {
+        if self.locals.len() > u8::MAX as usize {
+            return Err(());
+        }
+
+        let local = Local {
+            name,
+            depth: -1
+        };
+        self.locals.push(local);
+        Ok(())
+    }
+
+    pub fn mark_initialized(&mut self) {
+        let depth = self.depth();
+        self.locals.last_mut().unwrap().depth = depth;
+    }
+
+    pub fn local(&self, index: usize) -> &Local {
+        &self.locals[index]
+    }
+
+    /// Returns the index of the local plus whether it was initialized.
+    pub fn resolve(&self, token: &Token) -> (Option<isize>, bool) {
+        for (i, local) in self.locals.iter().enumerate().rev() {
+            if local.name.lexeme == token.lexeme {
+                return (Some(i as isize), local.depth != -1);
+            }
+        }
+        (None, true)
+    }
+}
+
 struct Compiler {
     scanner: Scanner,
     previous: Token,
@@ -10,6 +87,8 @@ struct Compiler {
     failed: bool,
     panic_mode: bool,
     chunk: Chunk,
+
+    resolver: Resolver,
 }
 
 impl Compiler {
@@ -21,6 +100,8 @@ impl Compiler {
             current: Token {token_type: TokenType::Error, lexeme: String::new(), line: 0},
             failed: false,
             panic_mode: false,
+
+            resolver: Resolver::new(),
         }
     }
 
@@ -124,7 +205,39 @@ impl Compiler {
 
     fn parse_variable(&mut self, err: &str) -> usize {
         self.consume(TokenType::Identifier, err);
-        self.identifier_constant(&self.previous.clone())
+        
+        self.declare_variable();
+        if self.resolver.depth() > 0 {
+            0
+        } else {
+            self.identifier_constant(&self.previous.clone())
+        }
+    }
+
+    fn declare_variable(&mut self) {
+        if self.resolver.depth() == 0 {
+            return;
+        }
+
+        let name = self.previous.clone();
+
+        // handles conflicts
+        if self.resolver.n_locals() > 0 {
+            for i in (self.resolver.n_locals() - 1)..=0 {
+                let local = self.resolver.local(i as usize);
+                if local.depth != -1 && local.depth < self.resolver.depth() {
+                    break;
+                }
+
+                if name.lexeme == local.name.lexeme {
+                    self.error("Redefinition of variable already in scope");
+                }
+            }
+        }
+
+        self.resolver.add_local(name).unwrap_or_else(|_| {
+            self.error("Too many local variables in function");
+        });
     }
 
     fn identifier_constant(&mut self, token: &Token) -> usize {
@@ -132,6 +245,11 @@ impl Compiler {
     }
 
     fn define_variable(&mut self, global: usize) {
+        if self.resolver.depth() > 0 {
+            self.resolver.mark_initialized();
+            return;
+        }
+
         if global > u8::MAX as usize {
             self.emit_opcode(OpCode::DefineLongGlobal);
             self.emit_usize(global);
@@ -144,9 +262,25 @@ impl Compiler {
     fn statement(&mut self) {
         if self.match_advance(TokenType::Print) {
             self.print_statement();
+        } else if self.match_advance(TokenType::LeftBrace) {
+            self.resolver.begin_scope();
+            self.block();
+
+            let n = self.resolver.end_scope();
+            for _ in 0..n {
+                self.emit_opcode(OpCode::Pop);
+            }
         } else {
             self.expression_statement();
         }
+    }
+
+    fn block(&mut self) {
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            self.declaration();
+        }
+
+        self.consume(TokenType::RightBrace, "Expected '}' after block");
     }
 
     fn print_statement(&mut self) {
@@ -240,23 +374,37 @@ impl Compiler {
     }
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
-        let arg = self.identifier_constant(&name);
+        let (arg, get_op, set_op, long) = if let (Some(arg), initialized) = self.resolver.resolve(name) {
+            // we're dealing with locals.
+            if !initialized {
+                self.error("Can't read local variable in own initializer");
+            }
+            (arg as usize, OpCode::GetLocal, OpCode::SetLocal, false)
+        } else {
+            // we're dealing with globals.
+            let arg = self.identifier_constant(name) as usize;
+            if arg > u8::MAX as usize {
+                (arg, OpCode::GetLongGlobal, OpCode::SetLongGlobal, true)
+            } else {
+                (arg, OpCode::GetGlobal, OpCode::SetGlobal, false)
+            }
+        };
 
         if can_assign && self.match_advance(TokenType::Equal) {
             self.expression();
-            if arg > u8::MAX as usize {
-                self.emit_opcode(OpCode::SetLongGlobal);
+            self.emit_opcode(set_op);
+            if long {
                 self.emit_usize(arg);
             } else {
-                self.emit_opcode(OpCode::SetGlobal);
                 self.emit_byte(arg as u8);
             }
-        } else if arg > u8::MAX as usize {
-                self.emit_opcode(OpCode::GetLongGlobal);
-                self.emit_usize(arg);
         } else {
-            self.emit_opcode(OpCode::GetGlobal);
-            self.emit_byte(arg as u8);
+            self.emit_opcode(get_op);
+            if long {
+                self.emit_usize(arg);
+            } else {
+                self.emit_byte(arg as u8);
+            }
         }
     }
 

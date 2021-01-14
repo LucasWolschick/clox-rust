@@ -50,6 +50,6 @@ pub fn file(mut file: File) {
 fn interpret(source: &str) -> InterpretResult {
     let chunk = compiler::compile(source)?;
     let mut vm = vm::VM::new(Some(chunk)); //todo: persist state
-    vm.debug(true);
+    vm.debug(false);
     vm.interpret()
 }

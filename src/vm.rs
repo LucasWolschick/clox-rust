@@ -165,6 +165,16 @@ impl VM {
                         return Err(InterpretError::RuntimeError);
                     }
                 }
+                OpCode::GetLocal => {
+                    let slot = self.read_byte();
+                    let entry = self.stack.get(slot as usize).unwrap().clone();
+                    self.stack.push(entry);
+                }
+                OpCode::SetLocal => {
+                    let slot = self.read_byte();
+                    let front = self.stack.last().unwrap().clone();
+                    self.stack[slot as usize] = front;
+                }
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
                     let val = self.constant_to_value(&constant);
