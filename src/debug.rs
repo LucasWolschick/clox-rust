@@ -43,6 +43,12 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::GetLongGlobal => {
             long_constant_instruction("OP_GET_GLOBAL_LONG", &chunk, offset)
         }
+        OpCode::SetGlobal => {
+            constant_instruction("OP_SET_GLOBAL", &chunk, offset)
+        }
+        OpCode::SetLongGlobal => {
+            long_constant_instruction("OP_SET_GLOBAL_LONG", &chunk, offset)
+        }
         OpCode::Negate => {
             simple_instruction("OP_NEGATE", offset)
         }

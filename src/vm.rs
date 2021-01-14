@@ -120,6 +120,38 @@ impl VM {
                         return Err(InterpretError::RuntimeError);
                     }
                 }
+                OpCode::SetGlobal => {
+                    let name = self.read_constant();
+                    if let Constant::String(r) = name {
+                        let r = r.clone();
+                        let rc = self.allocate_string(r);
+                        if self.globals.get(&rc).is_some() {
+                            self.globals.insert(rc, self.peek_stack(0).unwrap().clone());
+                        } else {
+                            self.runtime_error(format!("Undefined variable '{}'", &rc).as_str());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    } else {
+                        self.runtime_error("Attempt to set non-string global");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::SetLongGlobal => {
+                    let name = self.read_long_constant();
+                    if let Constant::String(r) = name {
+                        let r = r.clone();
+                        let rc = self.allocate_string(r);
+                        if self.globals.get(&rc).is_some() {
+                            self.globals.insert(rc, self.peek_stack(0).unwrap().clone());
+                        } else {
+                            self.runtime_error(format!("Undefined variable '{}'", &rc).as_str());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    } else {
+                        self.runtime_error("Attempt to set non-string global");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
                     let val = self.constant_to_value(&constant);

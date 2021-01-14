@@ -9,6 +9,9 @@ pub enum OpCode {
 
     GetGlobal,
     GetLongGlobal,
+
+    SetGlobal,
+    SetLongGlobal,
     
     Pop,
     

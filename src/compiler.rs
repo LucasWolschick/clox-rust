@@ -75,7 +75,7 @@ impl Compiler {
     }
 
     fn make_constant(&mut self, constant: Constant) -> usize {
-        let i = self.chunk.register_constant(constant, self.previous.line);
+        let i = self.chunk.register_constant(constant);
         if let Ok(i) = i {
             i
         } else {
@@ -165,7 +165,7 @@ impl Compiler {
         self.parse_precedence(Precedence::Assignment);
     }
     
-    fn binary(&mut self) {
+    fn binary(&mut self, _: bool) {
         let token_type = self.previous.token_type;
         
         let rule = Self::get_rule(token_type);
@@ -198,12 +198,12 @@ impl Compiler {
         }
     }
     
-    fn grouping(&mut self) {
+    fn grouping(&mut self, _: bool) {
         self.expression();
         self.consume(TokenType::RightParen, "Expected ')' after expression");
     }
     
-    fn unary(&mut self) {
+    fn unary(&mut self, _: bool) {
         let token_type = self.previous.token_type;
         self.parse_precedence(Precedence::Unary); // operand
         match token_type {
@@ -213,20 +213,20 @@ impl Compiler {
         }
     }
     
-    fn number(&mut self) {
+    fn number(&mut self, _: bool) {
         let value = self.previous.lexeme.parse::<f64>().unwrap_or_default();
         let value = Constant::Number(value);
         self.emit_constant(value);
     }
 
-    fn string(&mut self) {
+    fn string(&mut self, _: bool) {
         let len = self.previous.lexeme.len();
         let value = self.previous.lexeme.chars().skip(1).take(len-2).collect();
         let value = Constant::String(value);
         self.emit_constant(value);
     }
 
-    fn literal(&mut self) {
+    fn literal(&mut self, _: bool) {
         match self.previous.token_type {
             TokenType::False => self.emit_opcode(OpCode::False),
             TokenType::True => self.emit_opcode(OpCode::True),
@@ -235,15 +235,25 @@ impl Compiler {
         }
     }
 
-    fn variable(&mut self) {
-        self.named_variable(&self.previous.clone());
+    fn variable(&mut self, can_assign: bool) {
+        self.named_variable(&self.previous.clone(), can_assign);
     }
 
-    fn named_variable(&mut self, name: &Token) {
+    fn named_variable(&mut self, name: &Token, can_assign: bool) {
         let arg = self.identifier_constant(&name);
-        if arg > u8::MAX as usize {
-            self.emit_opcode(OpCode::GetLongGlobal);
-            self.emit_usize(arg);
+
+        if can_assign && self.match_advance(TokenType::Equal) {
+            self.expression();
+            if arg > u8::MAX as usize {
+                self.emit_opcode(OpCode::SetLongGlobal);
+                self.emit_usize(arg);
+            } else {
+                self.emit_opcode(OpCode::SetGlobal);
+                self.emit_byte(arg as u8);
+            }
+        } else if arg > u8::MAX as usize {
+                self.emit_opcode(OpCode::GetLongGlobal);
+                self.emit_usize(arg);
         } else {
             self.emit_opcode(OpCode::GetGlobal);
             self.emit_byte(arg as u8);
@@ -252,10 +262,12 @@ impl Compiler {
 
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
+
+        let can_assign = precedence as isize <= Precedence::Assignment as isize;
         
         let prefix = Self::get_rule(self.previous.token_type).0;
         if let Some(prefix) = prefix {
-            prefix(self);
+            prefix(self, can_assign);
         } else {
             self.error("Expected expression");
             return;
@@ -265,8 +277,12 @@ impl Compiler {
             self.advance();
             let infix = Self::get_rule(self.previous.token_type).1;
             if let Some(infix) = infix {
-                infix(self);
+                infix(self, can_assign);
             }
+        }
+
+        if can_assign && self.match_advance(TokenType::Equal) {
+            self.error("Invalid assignment target");
         }
     }
     
@@ -393,5 +409,5 @@ impl Precedence {
     }
 }
 
-type ParseFn = fn(&mut Compiler) -> ();
+type ParseFn = fn(&mut Compiler, bool) -> ();
 struct ParseRule(Option<ParseFn>, Option<ParseFn>, Precedence);
