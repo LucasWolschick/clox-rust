@@ -1,0 +1,17 @@
+class Person {
+  init() {
+      
+  }
+  sayName() {
+    print this.prefix + this.name;
+  }
+}
+
+var jane = Person();
+jane.name = "Jane";
+
+var bill = Person();
+bill.name = "Bill";
+
+bill.sayName = jane.sayName;
+bill.sayName(); // ?

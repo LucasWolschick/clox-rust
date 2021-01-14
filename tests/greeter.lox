@@ -1,0 +1,5 @@
+fun greet(first, last) {
+    print "Hi, " + first + " " + last + "!";
+}
+
+greet("Dear", "Reader");

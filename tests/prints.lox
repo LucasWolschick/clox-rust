@@ -1,0 +1,5 @@
+print 1;
+print true;
+print nil;
+print "aaa";
+print ((1+10)/2)*10;
