@@ -9,7 +9,7 @@ use super::chunk::{Chunk, Constant};
 use super::debug;
 
 pub struct VM {
-    chunk: Chunk,
+    chunk: Option<Chunk>,
     ip: usize,
     debug: bool,
     stack: Vec<Value>,
@@ -19,7 +19,7 @@ pub struct VM {
 }
 
 impl VM {
-    pub fn new(chunk: Chunk) -> VM {
+    pub fn new(chunk: Option<Chunk>) -> VM {
         VM {
             chunk,
             ip: 0,
@@ -35,8 +35,21 @@ impl VM {
         self.debug = debug;
     }
 
+    pub fn load_chunk(&mut self, chunk: Chunk) {
+        self.chunk = Some(chunk);
+        self.ip = 0;
+    }
+
     pub fn interpret(&mut self) -> InterpretResult {
         self.run()
+    }
+
+    fn chunk(&self) -> &Chunk {
+        self.chunk.as_ref().unwrap()
+    }
+
+    fn _chunk_mut(&mut self) -> &mut Chunk {
+        self.chunk.as_mut().unwrap()
     }
 
     fn run(&mut self) -> InterpretResult {
@@ -49,7 +62,7 @@ impl VM {
                     print!("[ {} ]", slot);
                 }
                 println!();
-                debug::disassemble_instruction(&self.chunk, self.ip-1);
+                debug::disassemble_instruction(&self.chunk(), self.ip-1);
             }
 
             match OpCode::from(instruction) {
@@ -265,7 +278,7 @@ impl VM {
 
     fn read_byte(&mut self) -> u8 {
         self.ip += 1;
-        *self.chunk.at(self.ip - 1)
+        *self.chunk().at(self.ip - 1)
     }
 
     fn allocate_string(&mut self, string: String) -> StringReference {
@@ -280,14 +293,14 @@ impl VM {
 
     fn read_constant(&mut self) -> &Constant {
         let constant = self.read_byte() as usize;
-        self.chunk.get_constant(constant)
+        self.chunk().get_constant(constant)
     }
 
     fn read_long_constant(&mut self) -> &Constant {
         let constant = self.read_byte() as usize  // first byte
         | (self.read_byte() as usize) << 8 // second byte
         | (self.read_byte() as usize) << 16; // third byte
-        self.chunk.get_constant(constant)
+        self.chunk().get_constant(constant)
     }
 
     fn constant_to_value(&mut self, constant: &Constant) -> Value {
@@ -306,7 +319,7 @@ impl VM {
     }
 
     fn runtime_error(&mut self, err: &str) {
-        eprintln!("{}\n[line {}] in script", err, self.chunk.line_at_offset(self.ip));
+        eprintln!("{}\n[line {}] in script", err, self.chunk().line_at_offset(self.ip));
         self.stack.clear();
     }
 }

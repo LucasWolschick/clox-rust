@@ -21,6 +21,8 @@ pub enum InterpretError {
 
 pub fn repl() {
     let stdin = std::io::stdin();
+    let mut vm = vm::VM::new(None);
+
     loop {
         print!("> ");
         std::io::stdout().flush().unwrap();
@@ -30,7 +32,12 @@ pub fn repl() {
             break;
         }
 
-        let _ = interpret(line.as_str());
+        let chunk = compiler::compile(&line);
+        if let Ok(chunk) = chunk {
+            vm.load_chunk(chunk);
+            vm.debug(true);
+            let _ = vm.interpret();
+        }
     }
 }
 
@@ -42,7 +49,7 @@ pub fn file(mut file: File) {
 
 fn interpret(source: &str) -> InterpretResult {
     let chunk = compiler::compile(source)?;
-    let mut vm = vm::VM::new(chunk); //todo: persist state
+    let mut vm = vm::VM::new(Some(chunk)); //todo: persist state
     vm.debug(true);
     vm.interpret()
 }
