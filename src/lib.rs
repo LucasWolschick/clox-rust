@@ -35,7 +35,7 @@ pub fn repl() {
         let chunk = compiler::compile(&line);
         if let Ok(chunk) = chunk {
             vm.load_chunk(chunk);
-            vm.debug(true);
+            vm.debug(false);
             let _ = vm.interpret();
         }
     }

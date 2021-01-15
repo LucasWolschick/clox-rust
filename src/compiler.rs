@@ -155,6 +155,23 @@ impl Compiler {
         self.chunk.write_op(opcode, self.previous.line);
     }
 
+    fn emit_jump(&mut self, jump_op: OpCode) -> usize {
+        self.emit_opcode(jump_op);
+        self.emit_byte(0xFF);
+        self.emit_byte(0xFF);
+        self.chunk.count() - 2 // returns the address of the jump offset
+    }
+
+    fn patch_jump(&mut self, offset: usize) {
+        let jmp = self.chunk.count() - offset - 2; // the distance to jump over
+        if jmp > u16::MAX as usize {
+            self.error("Too much code to jump over");
+        }
+
+        self.chunk.patch(offset, ((jmp >> 8) & 0xFF) as u8);
+        self.chunk.patch(offset + 1, (jmp & 0xFF) as u8);
+    }
+
     fn make_constant(&mut self, constant: Constant) -> usize {
         let i = self.chunk.register_constant(constant);
         if let Ok(i) = i {
@@ -259,17 +276,26 @@ impl Compiler {
         }
     }
 
+    fn begin_scope(&mut self) {
+        self.resolver.begin_scope();
+    }
+
+    fn end_scope(&mut self) {
+        let n = self.resolver.end_scope();
+        for _ in 0..n {
+            self.emit_opcode(OpCode::Pop);
+        }
+    }
+
     fn statement(&mut self) {
         if self.match_advance(TokenType::Print) {
             self.print_statement();
+        } else if self.match_advance(TokenType::If) {
+            self.if_statement();
         } else if self.match_advance(TokenType::LeftBrace) {
-            self.resolver.begin_scope();
+            self.begin_scope();
             self.block();
-
-            let n = self.resolver.end_scope();
-            for _ in 0..n {
-                self.emit_opcode(OpCode::Pop);
-            }
+            self.end_scope();
         } else {
             self.expression_statement();
         }
@@ -293,6 +319,23 @@ impl Compiler {
         self.expression();
         self.consume(TokenType::Semicolon, "Expected ';' after value");
         self.emit_opcode(OpCode::Pop);
+    }
+
+    fn if_statement(&mut self) {
+        self.consume(TokenType::LeftParen, "Expected '(' after 'if'");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expected ')' after condition");
+
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+        self.statement();
+        let else_jump = self.emit_jump(OpCode::Jump);
+        self.patch_jump(then_jump);
+        self.emit_opcode(OpCode::Pop);
+        if self.match_advance(TokenType::Else) {
+            self.statement();
+        }
+        self.patch_jump(else_jump);
     }
 
     fn expression(&mut self) {

@@ -100,6 +100,12 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::Pop => {
             simple_instruction("OP_POP", offset)
         }
+        OpCode::JumpIfFalse => {
+            jump_instruction("OP_JUMP", 1, &chunk, offset)
+        }
+        OpCode::Jump => {
+            jump_instruction("OP_JUMP_IF_FALSE", 1, &chunk, offset)
+        }
     }
 }
 
@@ -117,6 +123,13 @@ fn constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {
     let constant = *chunk.at(offset+1);
     println!("{:16} {:4} '{}'", title, constant, chunk.get_constant(constant as usize));
     offset + 2
+}
+
+fn jump_instruction(title: &str, sign: i32, chunk: &Chunk, offset: usize) -> usize {
+    let jump = (*chunk.at(offset + 1) as i16) << 8;
+    let jump = jump | *chunk.at(offset + 2) as i16;
+    println!("{:16} {:4} -> {}", title, offset, (offset + 3) as i32 + sign * jump as i32);
+    offset + 3
 }
 
 fn long_constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {

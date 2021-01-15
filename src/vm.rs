@@ -282,6 +282,16 @@ impl VM {
                 OpCode::False => {
                     self.stack.push(Value::Bool(false))
                 }
+                OpCode::JumpIfFalse => {
+                    let offset = self.read_short();
+                    if self.peek_stack(0).unwrap().is_falsey() {
+                        self.ip += offset as usize;
+                    }
+                }
+                OpCode::Jump => {
+                    let offset = self.read_short();
+                    self.ip += offset as usize;
+                }
             }
         }
     }
@@ -289,6 +299,11 @@ impl VM {
     fn read_byte(&mut self) -> u8 {
         self.ip += 1;
         *self.chunk().at(self.ip - 1)
+    }
+
+    fn read_short(&mut self) -> u16 {
+        self.ip += 2;
+        (*self.chunk().at(self.ip - 2) as u16) << 8 | *self.chunk().at(self.ip - 1) as u16
     }
 
     fn allocate_string(&mut self, string: String) -> StringReference {

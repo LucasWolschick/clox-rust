@@ -69,6 +69,10 @@ impl Chunk {
         Ok(i)
     }
 
+    pub fn patch(&mut self, offset: usize, value: u8) {
+        self.code[offset] = value;
+    }
+
     pub fn register_constant(&mut self, constant: Constant) -> Result<usize, ()> {
         if self.constants.len() >= isize::MAX as usize {
             return Err(())
