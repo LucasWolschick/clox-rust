@@ -1,7 +1,7 @@
-use super::InterpretError;
+use super::chunk::{Chunk, Constant};
 use super::opcodes::OpCode;
 use super::scanner::{Scanner, Token, TokenType};
-use super::chunk::{Chunk, Constant};
+use super::InterpretError;
 
 struct Local {
     name: Token,
@@ -47,15 +47,12 @@ impl Resolver {
         self.locals.len()
     }
 
-    pub fn add_local(&mut self, name: Token) -> Result<(),()> {
+    pub fn add_local(&mut self, name: Token) -> Result<(), ()> {
         if self.locals.len() > u8::MAX as usize {
             return Err(());
         }
 
-        let local = Local {
-            name,
-            depth: -1
-        };
+        let local = Local { name, depth: -1 };
         self.locals.push(local);
         Ok(())
     }
@@ -96,8 +93,16 @@ impl Compiler {
         Compiler {
             scanner: Scanner::new(src),
             chunk: Chunk::new(),
-            previous: Token {token_type: TokenType::Error, lexeme: String::new(), line: 0},
-            current: Token {token_type: TokenType::Error, lexeme: String::new(), line: 0},
+            previous: Token {
+                token_type: TokenType::Error,
+                lexeme: String::new(),
+                line: 0,
+            },
+            current: Token {
+                token_type: TokenType::Error,
+                lexeme: String::new(),
+                line: 0,
+            },
             failed: false,
             panic_mode: false,
 
@@ -168,8 +173,19 @@ impl Compiler {
             self.error("Too much code to jump over");
         }
 
-        self.chunk.patch(offset, ((jmp >> 8) & 0xFF) as u8);
-        self.chunk.patch(offset + 1, (jmp & 0xFF) as u8);
+        self.chunk.patch(offset, (jmp >> 8) as u8);
+        self.chunk.patch(offset + 1, jmp as u8);
+    }
+
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_opcode(OpCode::Loop);
+        let offset = self.chunk.count() - loop_start + 2;
+        if offset > u16::MAX as usize {
+            self.error("Loop body too large");
+        }
+
+        self.emit_byte((offset >> 8) as u8);
+        self.emit_byte(offset as u8);
     }
 
     fn make_constant(&mut self, constant: Constant) -> usize {
@@ -206,7 +222,7 @@ impl Compiler {
             self.synchronize();
         }
     }
-    
+
     fn var_declaration(&mut self) {
         let global = self.parse_variable("Expected variable name");
 
@@ -216,13 +232,16 @@ impl Compiler {
             self.emit_opcode(OpCode::Nil);
         }
 
-        self.consume(TokenType::Semicolon, "Expected ';' after variable declaration");
+        self.consume(
+            TokenType::Semicolon,
+            "Expected ';' after variable declaration",
+        );
         self.define_variable(global);
     }
 
     fn parse_variable(&mut self, err: &str) -> usize {
         self.consume(TokenType::Identifier, err);
-        
+
         self.declare_variable();
         if self.resolver.depth() > 0 {
             0
@@ -292,6 +311,8 @@ impl Compiler {
             self.print_statement();
         } else if self.match_advance(TokenType::If) {
             self.if_statement();
+        } else if self.match_advance(TokenType::While) {
+            self.while_statement();
         } else if self.match_advance(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
@@ -338,6 +359,20 @@ impl Compiler {
         self.patch_jump(else_jump);
     }
 
+    fn while_statement(&mut self) {
+        let loop_start = self.chunk.count();
+        self.consume(TokenType::LeftParen, "Expected '(' after while");
+        self.expression();
+        self.consume(TokenType::RightParen, "Expected ')' after condition");
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
+
+        self.emit_opcode(OpCode::Pop);
+        self.statement();
+        self.emit_loop(loop_start);
+        self.patch_jump(exit_jump);
+        self.emit_opcode(OpCode::Pop);
+    }
+
     fn expression(&mut self) {
         self.parse_precedence(Precedence::Assignment);
     }
@@ -357,10 +392,10 @@ impl Compiler {
         self.parse_precedence(Precedence::Or);
         self.patch_jump(end_jump);
     }
-    
+
     fn binary(&mut self, _: bool) {
         let token_type = self.previous.token_type;
-        
+
         let rule = Self::get_rule(token_type);
         self.parse_precedence(rule.2.higher());
 
@@ -387,25 +422,25 @@ impl Compiler {
                 self.emit_opcode(OpCode::Less);
                 self.emit_opcode(OpCode::Not);
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
-    
+
     fn grouping(&mut self, _: bool) {
         self.expression();
         self.consume(TokenType::RightParen, "Expected ')' after expression");
     }
-    
+
     fn unary(&mut self, _: bool) {
         let token_type = self.previous.token_type;
         self.parse_precedence(Precedence::Unary); // operand
         match token_type {
             TokenType::Minus => self.emit_opcode(OpCode::Negate),
             TokenType::Bang => self.emit_opcode(OpCode::Not),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
-    
+
     fn number(&mut self, _: bool) {
         let value = self.previous.lexeme.parse::<f64>().unwrap_or_default();
         let value = Constant::Number(value);
@@ -414,7 +449,7 @@ impl Compiler {
 
     fn string(&mut self, _: bool) {
         let len = self.previous.lexeme.len();
-        let value = self.previous.lexeme.chars().skip(1).take(len-2).collect();
+        let value = self.previous.lexeme.chars().skip(1).take(len - 2).collect();
         let value = Constant::String(value);
         self.emit_constant(value);
     }
@@ -433,21 +468,22 @@ impl Compiler {
     }
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
-        let (arg, get_op, set_op, long) = if let (Some(arg), initialized) = self.resolver.resolve(name) {
-            // we're dealing with locals.
-            if !initialized {
-                self.error("Can't read local variable in own initializer");
-            }
-            (arg as usize, OpCode::GetLocal, OpCode::SetLocal, false)
-        } else {
-            // we're dealing with globals.
-            let arg = self.identifier_constant(name) as usize;
-            if arg > u8::MAX as usize {
-                (arg, OpCode::GetLongGlobal, OpCode::SetLongGlobal, true)
+        let (arg, get_op, set_op, long) =
+            if let (Some(arg), initialized) = self.resolver.resolve(name) {
+                // we're dealing with locals.
+                if !initialized {
+                    self.error("Can't read local variable in own initializer");
+                }
+                (arg as usize, OpCode::GetLocal, OpCode::SetLocal, false)
             } else {
-                (arg, OpCode::GetGlobal, OpCode::SetGlobal, false)
-            }
-        };
+                // we're dealing with globals.
+                let arg = self.identifier_constant(name) as usize;
+                if arg > u8::MAX as usize {
+                    (arg, OpCode::GetLongGlobal, OpCode::SetLongGlobal, true)
+                } else {
+                    (arg, OpCode::GetGlobal, OpCode::SetGlobal, false)
+                }
+            };
 
         if can_assign && self.match_advance(TokenType::Equal) {
             self.expression();
@@ -471,7 +507,7 @@ impl Compiler {
         self.advance();
 
         let can_assign = precedence as isize <= Precedence::Assignment as isize;
-        
+
         let prefix = Self::get_rule(self.previous.token_type).0;
         if let Some(prefix) = prefix {
             prefix(self, can_assign);
@@ -492,34 +528,34 @@ impl Compiler {
             self.error("Invalid assignment target");
         }
     }
-    
+
     fn get_rule(token_type: TokenType) -> ParseRule {
         match token_type {
             // ParseRule(prefix, infix, precedence)
-            TokenType::LeftParen    => ParseRule(Some(Self::grouping), None, Precedence::None),
-            TokenType::Minus        => ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term),
-            TokenType::Plus         => ParseRule(None, Some(Self::binary), Precedence::Term),
-            TokenType::Slash        => ParseRule(None, Some(Self::binary), Precedence::Factor),
-            TokenType::Star         => ParseRule(None, Some(Self::binary), Precedence::Factor),
-            TokenType::Number       => ParseRule(Some(Self::number), None, Precedence::None),
-            TokenType::Nil          => ParseRule(Some(Self::literal), None, Precedence::None),
-            TokenType::False        => ParseRule(Some(Self::literal), None, Precedence::None),
-            TokenType::True         => ParseRule(Some(Self::literal), None, Precedence::None),
-            TokenType::Bang         => ParseRule(Some(Self::unary), None, Precedence::None),
-            TokenType::EqualEqual   => ParseRule(None, Some(Self::binary), Precedence::Equality),
-            TokenType::BangEqual    => ParseRule(None, Some(Self::binary), Precedence::Equality),
-            TokenType::LessEqual    => ParseRule(None, Some(Self::binary), Precedence::Comparison),
+            TokenType::LeftParen => ParseRule(Some(Self::grouping), None, Precedence::None),
+            TokenType::Minus => ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term),
+            TokenType::Plus => ParseRule(None, Some(Self::binary), Precedence::Term),
+            TokenType::Slash => ParseRule(None, Some(Self::binary), Precedence::Factor),
+            TokenType::Star => ParseRule(None, Some(Self::binary), Precedence::Factor),
+            TokenType::Number => ParseRule(Some(Self::number), None, Precedence::None),
+            TokenType::Nil => ParseRule(Some(Self::literal), None, Precedence::None),
+            TokenType::False => ParseRule(Some(Self::literal), None, Precedence::None),
+            TokenType::True => ParseRule(Some(Self::literal), None, Precedence::None),
+            TokenType::Bang => ParseRule(Some(Self::unary), None, Precedence::None),
+            TokenType::EqualEqual => ParseRule(None, Some(Self::binary), Precedence::Equality),
+            TokenType::BangEqual => ParseRule(None, Some(Self::binary), Precedence::Equality),
+            TokenType::LessEqual => ParseRule(None, Some(Self::binary), Precedence::Comparison),
             TokenType::GreaterEqual => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            TokenType::Greater      => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            TokenType::Less         => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            TokenType::String       => ParseRule(Some(Self::string), None, Precedence::None),
-            TokenType::Identifier   => ParseRule(Some(Self::variable), None, Precedence::None),
-            TokenType::And          => ParseRule(None, Some(Self::and), Precedence::And),
-            TokenType::Or           => ParseRule(None, Some(Self::or), Precedence::Or),
-            _                       => ParseRule(None, None, Precedence::None),
+            TokenType::Greater => ParseRule(None, Some(Self::binary), Precedence::Comparison),
+            TokenType::Less => ParseRule(None, Some(Self::binary), Precedence::Comparison),
+            TokenType::String => ParseRule(Some(Self::string), None, Precedence::None),
+            TokenType::Identifier => ParseRule(Some(Self::variable), None, Precedence::None),
+            TokenType::And => ParseRule(None, Some(Self::and), Precedence::And),
+            TokenType::Or => ParseRule(None, Some(Self::or), Precedence::Or),
+            _ => ParseRule(None, None, Precedence::None),
         }
     }
-    
+
     // error handling
     fn synchronize(&mut self) {
         self.panic_mode = false;
@@ -529,9 +565,14 @@ impl Compiler {
             }
 
             match self.current.token_type {
-                TokenType::Class | TokenType::Fun | TokenType::Var
-                | TokenType::For | TokenType::If | TokenType::While
-                | TokenType::Print | TokenType::Return => return,
+                TokenType::Class
+                | TokenType::Fun
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => return,
                 _ => (),
             };
 
@@ -570,7 +611,7 @@ impl Compiler {
 
 pub fn compile(src: &str) -> Result<Chunk, InterpretError> {
     let mut compiler = Compiler::new(src);
-    
+
     compiler.advance();
     while !compiler.is_at_end() {
         compiler.declaration();

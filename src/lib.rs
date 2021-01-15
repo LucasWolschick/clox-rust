@@ -11,7 +11,10 @@ mod vm;
 use fnv::FnvHashMap as HashTable;
 use fnv::FnvHashSet as HashSet;
 
-use std::{fs::File, io::{Read, Write}};
+use std::{
+    fs::File,
+    io::{Read, Write},
+};
 
 pub type InterpretResult = Result<(), InterpretError>;
 pub enum InterpretError {

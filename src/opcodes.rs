@@ -18,9 +18,10 @@ pub enum OpCode {
 
     JumpIfFalse,
     Jump,
-    
+    Loop,
+
     Pop,
-    
+
     Return,
     Print,
 

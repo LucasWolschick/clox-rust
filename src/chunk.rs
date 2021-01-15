@@ -55,7 +55,7 @@ impl Chunk {
 
     pub fn write_constant(&mut self, constant: Constant, line: isize) -> Result<usize, ()> {
         if self.constants.len() >= isize::MAX as usize {
-            return Err(())
+            return Err(());
         }
 
         let i = self.add_constant(constant);
@@ -75,7 +75,7 @@ impl Chunk {
 
     pub fn register_constant(&mut self, constant: Constant) -> Result<usize, ()> {
         if self.constants.len() >= isize::MAX as usize {
-            return Err(())
+            return Err(());
         }
 
         let i = self.add_constant(constant);

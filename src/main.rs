@@ -5,7 +5,7 @@ fn main() {
     match args.len() {
         0 => {
             clox::repl();
-        },
+        }
         1 => {
             let path = Path::new(&args[0]);
             let file = File::open(path);
@@ -19,10 +19,10 @@ fn main() {
                     std::process::exit(66);
                 }
             };
-        },
+        }
         _ => {
             eprintln!("Usage: clox [path]");
             std::process::exit(64);
-        },
+        }
     }
 }

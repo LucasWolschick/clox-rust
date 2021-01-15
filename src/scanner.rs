@@ -52,30 +52,38 @@ impl Scanner {
             '+' => self.token(TokenType::Plus),
             '/' => self.token(TokenType::Slash),
             '*' => self.token(TokenType::Star),
-            '!' => if self.match_advance('=') {
-                self.token(TokenType::BangEqual)
-            } else {
-                self.token(TokenType::Bang)
+            '!' => {
+                if self.match_advance('=') {
+                    self.token(TokenType::BangEqual)
+                } else {
+                    self.token(TokenType::Bang)
+                }
             }
-            '=' => if self.match_advance('=') {
-                self.token(TokenType::EqualEqual)
-            } else {
-                self.token(TokenType::Equal)
+            '=' => {
+                if self.match_advance('=') {
+                    self.token(TokenType::EqualEqual)
+                } else {
+                    self.token(TokenType::Equal)
+                }
             }
-            '>' => if self.match_advance('=') {
-                self.token(TokenType::GreaterEqual)
-            } else {
-                self.token(TokenType::Greater)
+            '>' => {
+                if self.match_advance('=') {
+                    self.token(TokenType::GreaterEqual)
+                } else {
+                    self.token(TokenType::Greater)
+                }
             }
-            '<' => if self.match_advance('=') {
-                self.token(TokenType::LessEqual)
-            } else {
-                self.token(TokenType::Less)
+            '<' => {
+                if self.match_advance('=') {
+                    self.token(TokenType::LessEqual)
+                } else {
+                    self.token(TokenType::Less)
+                }
             }
             '"' => self.string(),
             '0'..='9' => self.number(),
             'a'..='z' | 'A'..='Z' | '_' => self.identifier(),
-            _ => self.error_token("Unexpected character")
+            _ => self.error_token("Unexpected character"),
         }
     }
 
@@ -101,7 +109,7 @@ impl Scanner {
 
     fn advance(&mut self) -> char {
         self.current += 1;
-        self.src[self.current-1]
+        self.src[self.current - 1]
     }
 
     fn match_advance(&mut self, char: char) -> bool {
@@ -191,7 +199,7 @@ impl Scanner {
             _ => TokenType::Identifier,
         }
     }
-    
+
     fn number(&mut self) -> Token {
         while Self::is_digit(self.peek()) {
             self.advance();
@@ -234,19 +242,51 @@ pub struct Token {
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TokenType {
     // 1 char
-    LeftParen, RightParen, LeftBrace, RightBrace,
-    Comma, Dot, Minus, Plus, Semicolon, Slash, Star,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    Comma,
+    Dot,
+    Minus,
+    Plus,
+    Semicolon,
+    Slash,
+    Star,
 
     // 1-2 chars
-    Bang, BangEqual, Equal, EqualEqual,
-    Greater, GreaterEqual, Less, LessEqual,
+    Bang,
+    BangEqual,
+    Equal,
+    EqualEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
 
     // literals
-    Identifier, String, Number,
+    Identifier,
+    String,
+    Number,
 
     // keywords
-    And, Class, Else, False, For, Fun, If, Nil, Or,
-    Print, Return, Super, This, True, Var, While,
+    And,
+    Class,
+    Else,
+    False,
+    For,
+    Fun,
+    If,
+    Nil,
+    Or,
+    Print,
+    Return,
+    Super,
+    This,
+    True,
+    Var,
+    While,
 
-    Error, Eof,
+    Error,
+    Eof,
 }

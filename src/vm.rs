@@ -2,11 +2,11 @@ use std::rc::Rc;
 
 use super::{HashSet, HashTable};
 
-use super::{InterpretResult, InterpretError};
-use super::opcodes::OpCode;
-use super::value::{Value, ObjectReference, StringReference};
 use super::chunk::{Chunk, Constant};
 use super::debug;
+use super::opcodes::OpCode;
+use super::value::{ObjectReference, StringReference, Value};
+use super::{InterpretError, InterpretResult};
 
 pub struct VM {
     chunk: Option<Chunk>,
@@ -62,16 +62,16 @@ impl VM {
                     print!("[ {} ]", slot);
                 }
                 println!();
-                debug::disassemble_instruction(&self.chunk(), self.ip-1);
+                debug::disassemble_instruction(&self.chunk(), self.ip - 1);
             }
 
             match OpCode::from(instruction) {
-                OpCode::Return => { 
+                OpCode::Return => {
                     return Ok(());
                 }
                 OpCode::Print => {
                     let constant = self.stack.pop().unwrap();
-                    println!("{}", constant);    
+                    println!("{}", constant);
                 }
                 OpCode::Pop => {
                     let _ = self.stack.pop();
@@ -201,7 +201,9 @@ impl VM {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
                     match (lhs, rhs) {
-                        (Value::Number(l), Value::Number(r)) => self.stack.push(Value::Number(l+r)),
+                        (Value::Number(l), Value::Number(r)) => {
+                            self.stack.push(Value::Number(l + r))
+                        }
                         (Value::String(l), Value::String(r)) => {
                             let mut result = String::clone(&l);
                             result.push_str(&r);
@@ -218,7 +220,7 @@ impl VM {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
                     if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
-                        self.stack.push(Value::Number(l-r));
+                        self.stack.push(Value::Number(l - r));
                     } else {
                         self.runtime_error("Operands must be numbers");
                         return Err(InterpretError::RuntimeError);
@@ -228,7 +230,7 @@ impl VM {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
                     if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
-                        self.stack.push(Value::Number(l*r));
+                        self.stack.push(Value::Number(l * r));
                     } else {
                         self.runtime_error("Operands must be numbers");
                         return Err(InterpretError::RuntimeError);
@@ -238,7 +240,7 @@ impl VM {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
                     if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
-                        self.stack.push(Value::Number(l/r));
+                        self.stack.push(Value::Number(l / r));
                     } else {
                         self.runtime_error("Operands must be numbers");
                         return Err(InterpretError::RuntimeError);
@@ -257,7 +259,7 @@ impl VM {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
                     if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
-                        self.stack.push(Value::Bool(l<r));
+                        self.stack.push(Value::Bool(l < r));
                     } else {
                         self.runtime_error("Operands must be numbers");
                         return Err(InterpretError::RuntimeError);
@@ -267,21 +269,15 @@ impl VM {
                     let rhs = self.stack.pop().unwrap();
                     let lhs = self.stack.pop().unwrap();
                     if let (Value::Number(l), Value::Number(r)) = (lhs, rhs) {
-                        self.stack.push(Value::Bool(l>r));
+                        self.stack.push(Value::Bool(l > r));
                     } else {
                         self.runtime_error("Operands must be numbers");
                         return Err(InterpretError::RuntimeError);
                     }
                 }
-                OpCode::Nil => {
-                    self.stack.push(Value::Nil)
-                }
-                OpCode::True => {
-                    self.stack.push(Value::Bool(true))
-                }
-                OpCode::False => {
-                    self.stack.push(Value::Bool(false))
-                }
+                OpCode::Nil => self.stack.push(Value::Nil),
+                OpCode::True => self.stack.push(Value::Bool(true)),
+                OpCode::False => self.stack.push(Value::Bool(false)),
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
                     if self.peek_stack(0).unwrap().is_falsey() {
@@ -291,6 +287,10 @@ impl VM {
                 OpCode::Jump => {
                     let offset = self.read_short();
                     self.ip += offset as usize;
+                }
+                OpCode::Loop => {
+                    let offset = self.read_short();
+                    self.ip -= offset as usize;
                 }
             }
         }
@@ -335,7 +335,7 @@ impl VM {
                 Value::String(string)
             }
             Constant::Number(n) => Value::Number(*n),
-            Constant::Nil => Value::Nil
+            Constant::Nil => Value::Nil,
         }
     }
 
@@ -344,7 +344,11 @@ impl VM {
     }
 
     fn runtime_error(&mut self, err: &str) {
-        eprintln!("{}\n[line {}] in script", err, self.chunk().line_at_offset(self.ip));
+        eprintln!(
+            "{}\n[line {}] in script",
+            err,
+            self.chunk().line_at_offset(self.ip)
+        );
         self.stack.clear();
     }
 }
