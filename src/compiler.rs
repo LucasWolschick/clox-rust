@@ -313,6 +313,8 @@ impl Compiler {
             self.if_statement();
         } else if self.match_advance(TokenType::While) {
             self.while_statement();
+        } else if self.match_advance(TokenType::For) {
+            self.for_statement();
         } else if self.match_advance(TokenType::LeftBrace) {
             self.begin_scope();
             self.block();
@@ -371,6 +373,59 @@ impl Compiler {
         self.emit_loop(loop_start);
         self.patch_jump(exit_jump);
         self.emit_opcode(OpCode::Pop);
+    }
+
+    fn for_statement(&mut self) {
+        self.begin_scope();
+        self.consume(TokenType::LeftParen, "Expected '(' after 'for'");
+
+        // INITIALIZER
+        if self.match_advance(TokenType::Semicolon) {
+            // no initializer
+        } else if self.match_advance(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.expression_statement();
+        }
+
+        let mut loop_start = self.chunk.count();
+
+        // CONDITION
+        let exit_jump = if !self.match_advance(TokenType::Semicolon) {
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expected ';' after loop condition");
+
+            let exit_jump = self.emit_jump(OpCode::JumpIfFalse);
+            self.emit_opcode(OpCode::Pop);
+            Some(exit_jump)
+        } else {
+            None
+        };
+
+        // INCREMENT
+        if !self.match_advance(TokenType::RightParen) {
+            let body_jump = self.emit_jump(OpCode::Jump);
+            let increment_start = self.chunk.count();
+            self.expression();
+            self.emit_opcode(OpCode::Pop);
+            self.consume(TokenType::RightParen, "Expected ')' after for clauses");
+            self.emit_loop(loop_start);
+            loop_start = increment_start;
+            self.patch_jump(body_jump);
+        }
+
+        // BODY
+        self.statement();
+
+        self.emit_loop(loop_start);
+
+        // CONDITION PATCHING
+        if let Some(offset) = exit_jump {
+            self.patch_jump(offset);
+            self.emit_opcode(OpCode::Pop); // for the condition
+        }
+
+        self.end_scope();
     }
 
     fn expression(&mut self) {
