@@ -341,6 +341,22 @@ impl Compiler {
     fn expression(&mut self) {
         self.parse_precedence(Precedence::Assignment);
     }
+
+    fn and(&mut self, _: bool) {
+        let end_jump = self.emit_jump(OpCode::JumpIfFalse);
+        self.emit_opcode(OpCode::Pop);
+        self.parse_precedence(Precedence::And);
+        self.patch_jump(end_jump);
+    }
+
+    fn or(&mut self, _: bool) {
+        let else_jump = self.emit_jump(OpCode::JumpIfFalse);
+        let end_jump = self.emit_jump(OpCode::Jump);
+        self.patch_jump(else_jump);
+        self.emit_opcode(OpCode::Pop);
+        self.parse_precedence(Precedence::Or);
+        self.patch_jump(end_jump);
+    }
     
     fn binary(&mut self, _: bool) {
         let token_type = self.previous.token_type;
@@ -498,6 +514,8 @@ impl Compiler {
             TokenType::Less         => ParseRule(None, Some(Self::binary), Precedence::Comparison),
             TokenType::String       => ParseRule(Some(Self::string), None, Precedence::None),
             TokenType::Identifier   => ParseRule(Some(Self::variable), None, Precedence::None),
+            TokenType::And          => ParseRule(None, Some(Self::and), Precedence::And),
+            TokenType::Or           => ParseRule(None, Some(Self::or), Precedence::Or),
             _                       => ParseRule(None, None, Precedence::None),
         }
     }
