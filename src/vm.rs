@@ -5,7 +5,7 @@ use super::{HashSet, HashTable};
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{ObjectReference, StringReference, Value};
+use super::value::{StringReference, Value};
 use super::{InterpretError, InterpretResult};
 
 pub struct VM {
@@ -14,7 +14,6 @@ pub struct VM {
     debug: bool,
     stack: Vec<Value>,
     strings: HashSet<Rc<String>>,
-    objects: Vec<ObjectReference>,
     globals: HashTable<Rc<String>, Value>,
 }
 
@@ -25,7 +24,6 @@ impl VM {
             ip: 0,
             debug: false,
             stack: Vec::new(),
-            objects: Vec::new(),
             strings: HashSet::default(),
             globals: HashTable::default(),
         }

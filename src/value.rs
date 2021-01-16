@@ -4,22 +4,11 @@ use std::rc::Rc;
 pub enum Value {
     Number(f64),
     Bool(bool),
-    Object(ObjectReference),
     String(StringReference),
     Nil,
 }
 
-pub type ObjectReference = Rc<ObjectValue>;
 pub type StringReference = Rc<String>;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ObjectValue;
-
-impl std::fmt::Display for ObjectValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("<obj>")
-    }
-}
 
 impl Default for Value {
     fn default() -> Value {
@@ -42,7 +31,6 @@ impl std::fmt::Display for Value {
         match self {
             Value::Number(n) => f.write_str(n.to_string().as_str()),
             Value::Bool(b) => f.write_str(b.to_string().as_str()),
-            Value::Object(o) => f.write_str(o.to_string().as_str()),
             Value::String(s) => f.write_str(s.as_str()),
             Value::Nil => f.write_str("nil"),
         }

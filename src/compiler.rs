@@ -199,15 +199,7 @@ impl Compiler {
     }
 
     fn emit_constant(&mut self, constant: Constant) -> usize {
-        let i = self.make_constant(constant);
-        if i > u8::MAX as usize {
-            self.emit_opcode(OpCode::LongConstant);
-            self.emit_usize(i);
-        } else {
-            self.emit_opcode(OpCode::Constant);
-            self.emit_byte(i as u8);
-        }
-        i
+        self.chunk.write_constant(constant, self.previous.line).unwrap()
     }
 
     // parser
