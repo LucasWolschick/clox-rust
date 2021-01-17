@@ -15,7 +15,10 @@ impl std::fmt::Display for Constant {
         match self {
             Self::String(s) => f.write_str(s.as_str()),
             Self::Number(n) => f.write_str(n.to_string().as_str()),
-            Self::Function(_) => f.write_str("<fn>"),
+            Self::Function(fun) => match fun.name() {
+                Some(name) => f.write_fmt(format_args!("<fn {}>", name)),
+                None => f.write_str("<script>"),
+            }
             Self::Nil => f.write_str("nil"),
         }
     }

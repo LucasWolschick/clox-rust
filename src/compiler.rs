@@ -90,13 +90,19 @@ struct CompilerState {
 
 impl CompilerState {
     fn new(name: Option<StringReference>) -> Self {
+        let mut resolver = Resolver::new();
         let mut function = FunctionObject::new();
+        
         if let Some(name) = name {
+            resolver.add_local((*name).clone()).unwrap();
             function.set_name(name);
+        } else {
+            resolver.add_local(String::new()).unwrap();
         }
+
         CompilerState {
             function,
-            resolver: Resolver::new(),
+            resolver,
         }
     }
 }
@@ -217,6 +223,11 @@ impl Compiler {
 
         self.emit_byte((offset >> 8) as u8);
         self.emit_byte(offset as u8);
+    }
+
+    fn emit_return(&mut self) {
+        self.emit_opcode(OpCode::Nil);
+        self.emit_opcode(OpCode::Return);
     }
 
     fn make_constant(&mut self, constant: Constant) -> usize {
@@ -344,6 +355,8 @@ impl Compiler {
             self.print_statement();
         } else if self.match_advance(TokenType::If) {
             self.if_statement();
+        } else if self.match_advance(TokenType::Return) {
+            self.return_statement();
         } else if self.match_advance(TokenType::While) {
             self.while_statement();
         } else if self.match_advance(TokenType::For) {
@@ -427,6 +440,20 @@ impl Compiler {
             self.statement();
         }
         self.patch_jump(else_jump);
+    }
+
+    fn return_statement(&mut self) {
+        if self.state.function.name().is_none() {
+            self.error("Cannot return from top-level code");
+        }
+
+        if self.match_advance(TokenType::Semicolon) {
+            self.emit_return();
+        } else {
+            self.expression();
+            self.consume(TokenType::Semicolon, "Expected ';' after return value");
+            self.emit_opcode(OpCode::Return);
+        }
     }
 
     fn while_statement(&mut self) {
@@ -547,6 +574,33 @@ impl Compiler {
             }
             _ => unreachable!(),
         }
+    }
+
+    fn call(&mut self, _: bool) {
+        let arg_count = self.argument_list();
+        self.emit_opcode(OpCode::Call);
+        self.emit_byte(arg_count);
+    }
+
+    fn argument_list(&mut self) -> u8 {
+        let mut count = 0;
+
+        if !self.check(TokenType::RightParen) {
+            loop {
+                self.expression();
+                if count == 255 {
+                    self.error("Cannot have more than 255 arguments");
+                } else {
+                    count += 1;
+                }
+
+                if !self.match_advance(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
+        count
     }
 
     fn grouping(&mut self, _: bool) {
@@ -675,6 +729,7 @@ impl Compiler {
             TokenType::Identifier => ParseRule(Some(Self::variable), None, Precedence::None),
             TokenType::And => ParseRule(None, Some(Self::and), Precedence::And),
             TokenType::Or => ParseRule(None, Some(Self::or), Precedence::Or),
+            TokenType::Fun => ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call),
             _ => ParseRule(None, None, Precedence::None),
         }
     }
@@ -739,7 +794,7 @@ pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
     while !compiler.is_at_end() {
         compiler.declaration();
     }
-    compiler.emit_opcode(OpCode::Return);
+    compiler.emit_return();
 
     if compiler.failed() {
         Err(InterpretError::CompileError)

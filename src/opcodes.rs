@@ -20,6 +20,8 @@ pub enum OpCode {
     Jump,
     Loop,
 
+    Call,
+
     Pop,
 
     Return,

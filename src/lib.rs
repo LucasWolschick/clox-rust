@@ -53,6 +53,5 @@ fn interpret(source: &str) -> InterpretResult {
     let function = compiler::compile(source)?;
     let mut vm = vm::VM::new(); //todo: persist state
     vm.debug(false);
-    vm.interpret(function);
-    todo!()
+    vm.interpret(function)
 }

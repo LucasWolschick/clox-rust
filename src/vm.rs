@@ -41,13 +41,7 @@ impl VM {
 
     pub fn interpret(&mut self, function: FunctionObject) -> InterpretResult {
         let rc = Rc::new(function);
-        self.stack.push(Value::Function(Rc::clone(&rc)));
-        let frame = CallFrame {
-            function: rc,
-            ip: 0,
-            slot_offset: 0,
-        };
-        self.frames.push(frame);
+        self.call(rc, 0).unwrap();
         self.run()
     }
 
@@ -77,7 +71,17 @@ impl VM {
 
             match OpCode::from(instruction) {
                 OpCode::Return => {
-                    return Ok(());
+                    let result = self.stack.pop().unwrap();
+                    
+                    self.frames.pop();
+                    if self.frames.is_empty() {
+                        self.stack.pop();
+                        return Ok(());
+                    }
+
+                    let frame_offset = self.frames.last().unwrap().slot_offset;
+                    self.stack.truncate(frame_offset);
+                    self.stack.push(result);
                 }
                 OpCode::Print => {
                     let constant = self.stack.pop().unwrap();
@@ -307,8 +311,44 @@ impl VM {
                     let frame = self.frames.last_mut().unwrap();
                     frame.ip -= offset as usize;
                 }
+                OpCode::Call => {
+                    let arg_count = self.read_byte();
+                    let value = self.peek_stack(arg_count as usize).unwrap().clone(); //todo: find a better solution
+                    if self.call_value(&value, arg_count).is_err() {
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
             }
         }
+    }
+
+    fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(),()> {
+        if let Value::Function(f_obj) = callable {
+            self.call(Rc::clone(&f_obj), arg_count)
+        } else {
+            self.runtime_error("Only functions and classes are callable");
+            Err(())
+        }
+    }
+
+    fn call(&mut self, function: FunctionReference, arg_count: u8) -> Result<(),()> {
+        if function.arity != arg_count {
+            self.runtime_error(format!("Expected {} arguments but got {}", function.arity, arg_count).as_str());
+            return Err(());
+        }
+
+        if self.frames.len() == isize::MAX as usize {
+            self.runtime_error("Stack overflow");
+            return Err(());
+        }
+        
+        let frame = CallFrame {
+            function,
+            ip: 0,
+            slot_offset: self.stack.len() - arg_count as usize - 1,
+        };
+        self.frames.push(frame);
+        Err(())
     }
 
     fn read_byte(&mut self) -> u8 {
@@ -367,12 +407,16 @@ impl VM {
     }
 
     fn runtime_error(&mut self, err: &str) {
-        let frame = self.frames.last_mut().unwrap();
-        eprintln!(
-            "{}\n[line {}] in script",
-            err,
-            frame.function.chunk().line_at_offset(frame.ip)
-        );
+        eprintln!("{}", err);
+        for frame in self.frames.iter().rev() {
+            let instruction = frame.ip - 1;
+            eprintln!(
+                "[line {}] in {}",
+                frame.function.chunk().line_at_offset(instruction),
+                if let Some(n) = frame.function.name() { n.as_str() } else { "script" }
+            );
+        }
+
         self.clear_stack();
     }
 }
