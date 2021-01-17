@@ -1,3 +1,4 @@
+use super::value::FunctionObject;
 use super::opcodes::OpCode;
 
 // compile-time constant types. these are converted to Value during runtime.
@@ -5,6 +6,7 @@ use super::opcodes::OpCode;
 pub enum Constant {
     String(String),
     Number(f64),
+    Function(FunctionObject),
     Nil,
 }
 
@@ -13,6 +15,7 @@ impl std::fmt::Display for Constant {
         match self {
             Self::String(s) => f.write_str(s.as_str()),
             Self::Number(n) => f.write_str(n.to_string().as_str()),
+            Self::Function(_) => f.write_str("<fn>"),
             Self::Nil => f.write_str("nil"),
         }
     }

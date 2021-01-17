@@ -16,7 +16,7 @@ pub type FunctionReference = Rc<FunctionObject>;
 
 #[derive(Clone, PartialEq)]
 pub struct FunctionObject {
-    arity: u8,
+    pub arity: u8,
     chunk: Chunk,
     name: Option<StringReference>,
 }
@@ -63,6 +63,10 @@ impl FunctionObject {
 
     pub fn set_name(&mut self, name: StringReference) {
         self.name = Some(name)
+    }
+
+    pub fn name(&self) -> Option<&StringReference> {
+        self.name.as_ref()
     }
 
     pub fn chunk(&self) -> &Chunk {

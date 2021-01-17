@@ -351,6 +351,7 @@ impl VM {
                 let string = self.allocate_string(s.clone());
                 Value::String(string)
             }
+            Constant::Function(f) => Value::Function(Rc::new(f.clone())),
             Constant::Number(n) => Value::Number(*n),
             Constant::Nil => Value::Nil,
         }

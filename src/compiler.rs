@@ -1,6 +1,7 @@
 use std::rc::Rc;
+
 use super::chunk::{Chunk, Constant};
-use super::value::{FunctionReference, FunctionObject};
+use super::value::{FunctionObject, StringReference};
 use super::opcodes::OpCode;
 use super::scanner::{Scanner, Token, TokenType};
 use super::InterpretError;
@@ -61,6 +62,9 @@ impl Resolver {
 
     pub fn mark_initialized(&mut self) {
         let depth = self.depth();
+        if depth == 0 {
+            return;
+        }
         self.locals.last_mut().unwrap().depth = depth;
     }
 
@@ -79,15 +83,32 @@ impl Resolver {
     }
 }
 
+struct CompilerState {
+    function: FunctionObject,
+    resolver: Resolver,
+}
+
+impl CompilerState {
+    fn new(name: Option<StringReference>) -> Self {
+        let mut function = FunctionObject::new();
+        if let Some(name) = name {
+            function.set_name(name);
+        }
+        CompilerState {
+            function,
+            resolver: Resolver::new(),
+        }
+    }
+}
+
 struct Compiler {
     scanner: Scanner,
     previous: Token,
     current: Token,
     failed: bool,
     panic_mode: bool,
-    function: FunctionObject,
-
-    resolver: Resolver,
+    
+    state: CompilerState,
 }
 
 impl Compiler {
@@ -96,9 +117,9 @@ impl Compiler {
         resolver.add_local(String::new()).unwrap();
 
         Compiler {
-            resolver,
+            state: CompilerState::new(None),
+
             scanner: Scanner::new(src),
-            function: FunctionObject::new(),
 
             previous: Token::default(),
             current: Token::default(),
@@ -110,11 +131,11 @@ impl Compiler {
 
     // access
     fn chunk(&self) -> &Chunk {
-        &self.function.chunk()
+        &self.state.function.chunk()
     }
 
     fn chunk_mut(&mut self) -> &mut Chunk {
-        self.function.chunk_mut()
+        self.state.function.chunk_mut()
     }
 
     // controls
@@ -215,7 +236,9 @@ impl Compiler {
 
     // parser
     fn declaration(&mut self) {
-        if self.match_advance(TokenType::Var) {
+        if self.match_advance(TokenType::Fun) {
+            self.fun_declaration();
+        } else if self.match_advance(TokenType::Var) {
             self.var_declaration();
         } else {
             self.statement();
@@ -224,6 +247,13 @@ impl Compiler {
         if self.panic_mode {
             self.synchronize();
         }
+    }
+
+    fn fun_declaration(&mut self) {
+        let global = self.parse_variable("Expected function name");
+        self.state.resolver.mark_initialized();
+        self.function();
+        self.define_variable(global);
     }
 
     fn var_declaration(&mut self) {
@@ -246,7 +276,7 @@ impl Compiler {
         self.consume(TokenType::Identifier, err);
 
         self.declare_variable();
-        if self.resolver.depth() > 0 {
+        if self.state.resolver.depth() > 0 {
             0
         } else {
             self.identifier_constant(&self.previous.clone())
@@ -254,17 +284,17 @@ impl Compiler {
     }
 
     fn declare_variable(&mut self) {
-        if self.resolver.depth() == 0 {
+        if self.state.resolver.depth() == 0 {
             return;
         }
 
         let name = self.previous.lexeme.clone();
 
         // handles conflicts
-        if self.resolver.n_locals() > 0 {
-            for i in (self.resolver.n_locals() - 1)..=0 {
-                let local = self.resolver.local(i as usize);
-                if local.depth != -1 && local.depth < self.resolver.depth() {
+        if self.state.resolver.n_locals() > 0 {
+            for i in (self.state.resolver.n_locals() - 1)..=0 {
+                let local = self.state.resolver.local(i as usize);
+                if local.depth != -1 && local.depth < self.state.resolver.depth() {
                     break;
                 }
 
@@ -274,7 +304,7 @@ impl Compiler {
             }
         }
 
-        self.resolver.add_local(name).unwrap_or_else(|_| {
+        self.state.resolver.add_local(name).unwrap_or_else(|_| {
             self.error("Too many local variables in function");
         });
     }
@@ -284,8 +314,8 @@ impl Compiler {
     }
 
     fn define_variable(&mut self, global: usize) {
-        if self.resolver.depth() > 0 {
-            self.resolver.mark_initialized();
+        if self.state.resolver.depth() > 0 {
+            self.state.resolver.mark_initialized();
             return;
         }
 
@@ -299,11 +329,11 @@ impl Compiler {
     }
 
     fn begin_scope(&mut self) {
-        self.resolver.begin_scope();
+        self.state.resolver.begin_scope();
     }
 
     fn end_scope(&mut self) {
-        let n = self.resolver.end_scope();
+        let n = self.state.resolver.end_scope();
         for _ in 0..n {
             self.emit_opcode(OpCode::Pop);
         }
@@ -333,6 +363,41 @@ impl Compiler {
         }
 
         self.consume(TokenType::RightBrace, "Expected '}' after block");
+    }
+
+    fn function(&mut self) {
+        let name = Rc::new(self.previous.lexeme.clone());
+        let prev_state = std::mem::replace(&mut self.state, CompilerState::new(Some(name)));
+        self.begin_scope();
+
+        // parameter list
+        self.consume(TokenType::LeftParen, "Expected '(' after function name");
+        if !self.check(TokenType::RightParen) {
+            loop {
+                if self.state.function.arity == 255 {
+                    self.error_at_current("Cannot have more than 255 parameters");
+                } else {
+                    self.state.function.arity += 1;
+                }
+
+                let param_cons = self.parse_variable("Expected parameter name");
+                self.define_variable(param_cons);
+
+                if !self.match_advance(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+        self.consume(TokenType::RightParen, "Expected ')' after parameters");
+
+        // body
+        self.consume(TokenType::LeftBrace, "Expected '{' before function body");
+        self.block();
+
+        // function object
+        let new_state = std::mem::replace(&mut self.state, prev_state);
+        let function = new_state.function;
+        self.emit_constant(Constant::Function(function));
     }
 
     fn print_statement(&mut self) {
@@ -527,7 +592,7 @@ impl Compiler {
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
         let (arg, get_op, set_op, long) =
-            if let (Some(arg), initialized) = self.resolver.resolve(&name.lexeme) {
+            if let (Some(arg), initialized) = self.state.resolver.resolve(&name.lexeme) {
                 // we're dealing with locals.
                 if !initialized {
                     self.error("Can't read local variable in own initializer");
@@ -680,7 +745,7 @@ pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
         Err(InterpretError::CompileError)
     } else {
         super::debug::disassemble(&compiler.chunk(), "code");
-        Ok(compiler.function)
+        Ok(compiler.state.function)
     }
 }
 
