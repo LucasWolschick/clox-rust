@@ -239,6 +239,16 @@ pub struct Token {
     pub line: isize,
 }
 
+impl Default for Token {
+    fn default() -> Self {
+        Token {
+            token_type: TokenType::Error,
+            lexeme: String::new(),
+            line: 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TokenType {
     // 1 char

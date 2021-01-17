@@ -1,10 +1,12 @@
+use std::rc::Rc;
 use super::chunk::{Chunk, Constant};
+use super::value::{FunctionReference, FunctionObject};
 use super::opcodes::OpCode;
 use super::scanner::{Scanner, Token, TokenType};
 use super::InterpretError;
 
 struct Local {
-    name: Token,
+    name: String,
     depth: isize,
 }
 
@@ -47,7 +49,7 @@ impl Resolver {
         self.locals.len()
     }
 
-    pub fn add_local(&mut self, name: Token) -> Result<(), ()> {
+    pub fn add_local(&mut self, name: String) -> Result<(), ()> {
         if self.locals.len() > u8::MAX as usize {
             return Err(());
         }
@@ -67,9 +69,9 @@ impl Resolver {
     }
 
     /// Returns the index of the local plus whether it was initialized.
-    pub fn resolve(&self, token: &Token) -> (Option<isize>, bool) {
+    pub fn resolve(&self, token: &str) -> (Option<isize>, bool) {
         for (i, local) in self.locals.iter().enumerate().rev() {
-            if local.name.lexeme == token.lexeme {
+            if local.name == token {
                 return (Some(i as isize), local.depth != -1);
             }
         }
@@ -83,31 +85,36 @@ struct Compiler {
     current: Token,
     failed: bool,
     panic_mode: bool,
-    chunk: Chunk,
+    function: FunctionObject,
 
     resolver: Resolver,
 }
 
 impl Compiler {
     fn new(src: &str) -> Compiler {
+        let mut resolver = Resolver::new();
+        resolver.add_local(String::new()).unwrap();
+
         Compiler {
+            resolver,
             scanner: Scanner::new(src),
-            chunk: Chunk::new(),
-            previous: Token {
-                token_type: TokenType::Error,
-                lexeme: String::new(),
-                line: 0,
-            },
-            current: Token {
-                token_type: TokenType::Error,
-                lexeme: String::new(),
-                line: 0,
-            },
+            function: FunctionObject::new(),
+
+            previous: Token::default(),
+            current: Token::default(),
+
             failed: false,
             panic_mode: false,
-
-            resolver: Resolver::new(),
         }
+    }
+
+    // access
+    fn chunk(&self) -> &Chunk {
+        &self.function.chunk()
+    }
+
+    fn chunk_mut(&mut self) -> &mut Chunk {
+        self.function.chunk_mut()
     }
 
     // controls
@@ -149,37 +156,40 @@ impl Compiler {
 
     // codegen
     fn emit_byte(&mut self, byte: u8) {
-        self.chunk.write(byte, self.previous.line);
+        let line = self.previous.line;
+        self.chunk_mut().write(byte, line);
     }
 
     fn emit_usize(&mut self, i: usize) {
-        self.chunk.write_usize(i, self.previous.line);
+        let line = self.previous.line;
+        self.chunk_mut().write_usize(i, line);
     }
 
     fn emit_opcode(&mut self, opcode: OpCode) {
-        self.chunk.write_op(opcode, self.previous.line);
+        let line = self.previous.line;
+        self.chunk_mut().write_op(opcode, line);
     }
 
     fn emit_jump(&mut self, jump_op: OpCode) -> usize {
         self.emit_opcode(jump_op);
         self.emit_byte(0xFF);
         self.emit_byte(0xFF);
-        self.chunk.count() - 2 // returns the address of the jump offset
+        self.chunk().count() - 2 // returns the address of the jump offset
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jmp = self.chunk.count() - offset - 2; // the distance to jump over
+        let jmp = self.chunk().count() - offset - 2; // the distance to jump over
         if jmp > u16::MAX as usize {
             self.error("Too much code to jump over");
         }
 
-        self.chunk.patch(offset, (jmp >> 8) as u8);
-        self.chunk.patch(offset + 1, jmp as u8);
+        self.chunk_mut().patch(offset, (jmp >> 8) as u8);
+        self.chunk_mut().patch(offset + 1, jmp as u8);
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
         self.emit_opcode(OpCode::Loop);
-        let offset = self.chunk.count() - loop_start + 2;
+        let offset = self.chunk().count() - loop_start + 2;
         if offset > u16::MAX as usize {
             self.error("Loop body too large");
         }
@@ -189,7 +199,7 @@ impl Compiler {
     }
 
     fn make_constant(&mut self, constant: Constant) -> usize {
-        let i = self.chunk.register_constant(constant);
+        let i = self.chunk_mut().register_constant(constant);
         if let Ok(i) = i {
             i
         } else {
@@ -199,7 +209,8 @@ impl Compiler {
     }
 
     fn emit_constant(&mut self, constant: Constant) -> usize {
-        self.chunk.write_constant(constant, self.previous.line).unwrap()
+        let line = self.previous.line;
+        self.chunk_mut().write_constant(constant, line).unwrap()
     }
 
     // parser
@@ -247,7 +258,7 @@ impl Compiler {
             return;
         }
 
-        let name = self.previous.clone();
+        let name = self.previous.lexeme.clone();
 
         // handles conflicts
         if self.resolver.n_locals() > 0 {
@@ -257,7 +268,7 @@ impl Compiler {
                     break;
                 }
 
-                if name.lexeme == local.name.lexeme {
+                if name == local.name {
                     self.error("Redefinition of variable already in scope");
                 }
             }
@@ -354,7 +365,7 @@ impl Compiler {
     }
 
     fn while_statement(&mut self) {
-        let loop_start = self.chunk.count();
+        let loop_start = self.chunk().count();
         self.consume(TokenType::LeftParen, "Expected '(' after while");
         self.expression();
         self.consume(TokenType::RightParen, "Expected ')' after condition");
@@ -380,7 +391,7 @@ impl Compiler {
             self.expression_statement();
         }
 
-        let mut loop_start = self.chunk.count();
+        let mut loop_start = self.chunk().count();
 
         // CONDITION
         let exit_jump = if !self.match_advance(TokenType::Semicolon) {
@@ -397,7 +408,7 @@ impl Compiler {
         // INCREMENT
         if !self.match_advance(TokenType::RightParen) {
             let body_jump = self.emit_jump(OpCode::Jump);
-            let increment_start = self.chunk.count();
+            let increment_start = self.chunk().count();
             self.expression();
             self.emit_opcode(OpCode::Pop);
             self.consume(TokenType::RightParen, "Expected ')' after for clauses");
@@ -516,7 +527,7 @@ impl Compiler {
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
         let (arg, get_op, set_op, long) =
-            if let (Some(arg), initialized) = self.resolver.resolve(name) {
+            if let (Some(arg), initialized) = self.resolver.resolve(&name.lexeme) {
                 // we're dealing with locals.
                 if !initialized {
                     self.error("Can't read local variable in own initializer");
@@ -656,7 +667,7 @@ impl Compiler {
     }
 }
 
-pub fn compile(src: &str) -> Result<Chunk, InterpretError> {
+pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
     let mut compiler = Compiler::new(src);
 
     compiler.advance();
@@ -668,8 +679,8 @@ pub fn compile(src: &str) -> Result<Chunk, InterpretError> {
     if compiler.failed() {
         Err(InterpretError::CompileError)
     } else {
-        super::debug::disassemble(&compiler.chunk, "code");
-        Ok(compiler.chunk)
+        super::debug::disassemble(&compiler.chunk(), "code");
+        Ok(compiler.function)
     }
 }
 

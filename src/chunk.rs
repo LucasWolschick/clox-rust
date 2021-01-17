@@ -18,7 +18,7 @@ impl std::fmt::Display for Constant {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, PartialEq)]
 pub struct Chunk {
     constants: Vec<Constant>,
     lines: Vec<(isize, usize)>,

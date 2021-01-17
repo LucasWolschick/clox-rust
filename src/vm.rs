@@ -5,27 +5,33 @@ use super::{HashSet, HashTable};
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{StringReference, Value};
+use super::value::{StringReference, Value, FunctionObject, FunctionReference};
 use super::{InterpretError, InterpretResult};
 
-pub struct VM {
-    chunk: Option<Chunk>,
+struct CallFrame {
+    function: FunctionReference,
     ip: usize,
+    slot_offset: usize,
+}
+
+pub struct VM {
     debug: bool,
     stack: Vec<Value>,
-    strings: HashSet<Rc<String>>,
-    globals: HashTable<Rc<String>, Value>,
+    strings: HashSet<StringReference>,
+    globals: HashTable<StringReference, Value>,
+    frames: Vec<CallFrame>,
 }
 
 impl VM {
-    pub fn new(chunk: Option<Chunk>) -> VM {
+    pub fn new() -> VM {
+        let frames = Vec::with_capacity(64 * u8::MAX as usize);
+
         VM {
-            chunk,
-            ip: 0,
             debug: false,
             stack: Vec::new(),
             strings: HashSet::default(),
             globals: HashTable::default(),
+            frames,
         }
     }
 
@@ -33,22 +39,27 @@ impl VM {
         self.debug = debug;
     }
 
-    pub fn load_chunk(&mut self, chunk: Chunk) {
-        self.chunk = Some(chunk);
-        self.ip = 0;
-    }
-
-    pub fn interpret(&mut self) -> InterpretResult {
+    pub fn interpret(&mut self, function: FunctionObject) -> InterpretResult {
+        let rc = Rc::new(function);
+        self.stack.push(Value::Function(Rc::clone(&rc)));
+        let frame = CallFrame {
+            function: rc,
+            ip: 0,
+            slot_offset: 0,
+        };
+        self.frames.push(frame);
         self.run()
     }
 
     fn chunk(&self) -> &Chunk {
-        self.chunk.as_ref().unwrap()
+        let frame = self.frames.last().unwrap();
+        frame.function.chunk()
     }
 
-    fn _chunk_mut(&mut self) -> &mut Chunk {
-        self.chunk.as_mut().unwrap()
-    }
+    // fn chunk_mut(&mut self) -> &mut Chunk {
+    //     let frame = self.frames.last_mut().unwrap();
+    //     frame.function.chunk_mut()
+    // }
 
     fn run(&mut self) -> InterpretResult {
         loop {
@@ -60,7 +71,8 @@ impl VM {
                     print!("[ {} ]", slot);
                 }
                 println!();
-                debug::disassemble_instruction(&self.chunk(), self.ip - 1);
+                let frame = self.frames.last_mut().unwrap();
+                debug::disassemble_instruction(frame.function.chunk(), frame.ip - 1);
             }
 
             match OpCode::from(instruction) {
@@ -164,14 +176,16 @@ impl VM {
                     }
                 }
                 OpCode::GetLocal => {
+                    let offset = self.frames.last().unwrap().slot_offset;
                     let slot = self.read_byte();
-                    let entry = self.stack.get(slot as usize).unwrap().clone();
+                    let entry = self.stack.get(offset + slot as usize).unwrap().clone();
                     self.stack.push(entry);
                 }
                 OpCode::SetLocal => {
+                    let offset = self.frames.last().unwrap().slot_offset;
                     let slot = self.read_byte();
                     let front = self.stack.last().unwrap().clone();
-                    self.stack[slot as usize] = front;
+                    self.stack[offset + slot as usize] = front;
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
@@ -279,29 +293,34 @@ impl VM {
                 OpCode::JumpIfFalse => {
                     let offset = self.read_short();
                     if self.peek_stack(0).unwrap().is_falsey() {
-                        self.ip += offset as usize;
+                        let frame = self.frames.last_mut().unwrap();
+                        frame.ip += offset as usize;
                     }
                 }
                 OpCode::Jump => {
                     let offset = self.read_short();
-                    self.ip += offset as usize;
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.ip += offset as usize;
                 }
                 OpCode::Loop => {
                     let offset = self.read_short();
-                    self.ip -= offset as usize;
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.ip -= offset as usize;
                 }
             }
         }
     }
 
     fn read_byte(&mut self) -> u8 {
-        self.ip += 1;
-        *self.chunk().at(self.ip - 1)
+        let frame = self.frames.last_mut().unwrap();
+        frame.ip += 1;
+        *frame.function.chunk().at(frame.ip - 1)
     }
 
     fn read_short(&mut self) -> u16 {
-        self.ip += 2;
-        (*self.chunk().at(self.ip - 2) as u16) << 8 | *self.chunk().at(self.ip - 1) as u16
+        let frame = self.frames.last_mut().unwrap();
+        frame.ip += 2;
+        (*frame.function.chunk().at(frame.ip - 2) as u16) << 8 | *frame.function.chunk().at(frame.ip - 1) as u16
     }
 
     fn allocate_string(&mut self, string: String) -> StringReference {
@@ -341,12 +360,18 @@ impl VM {
         self.stack.iter().nth_back(distance)
     }
 
+    fn clear_stack(&mut self) {
+        self.stack.clear();
+        self.frames.clear();
+    }
+
     fn runtime_error(&mut self, err: &str) {
+        let frame = self.frames.last_mut().unwrap();
         eprintln!(
             "{}\n[line {}] in script",
             err,
-            self.chunk().line_at_offset(self.ip)
+            frame.function.chunk().line_at_offset(frame.ip)
         );
-        self.stack.clear();
+        self.clear_stack();
     }
 }
