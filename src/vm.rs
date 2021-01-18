@@ -24,11 +24,11 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> VM {
-        let frames = Vec::with_capacity(64 * u8::MAX as usize);
+        let frames = Vec::with_capacity(64);
 
         VM {
             debug: false,
-            stack: Vec::new(),
+            stack: Vec::with_capacity(64 * u8::MAX as usize),
             strings: HashSet::default(),
             globals: HashTable::default(),
             frames,
@@ -73,13 +73,13 @@ impl VM {
                 OpCode::Return => {
                     let result = self.stack.pop().unwrap();
                     
-                    self.frames.pop();
+                    let frame = self.frames.pop().unwrap();
                     if self.frames.is_empty() {
                         self.stack.pop();
                         return Ok(());
                     }
 
-                    let frame_offset = self.frames.last().unwrap().slot_offset;
+                    let frame_offset = frame.slot_offset;
                     self.stack.truncate(frame_offset);
                     self.stack.push(result);
                 }
@@ -345,10 +345,10 @@ impl VM {
         let frame = CallFrame {
             function,
             ip: 0,
-            slot_offset: self.stack.len() - arg_count as usize - 1,
+            slot_offset: (self.stack.len() as isize - arg_count as isize - 1) as usize,
         };
         self.frames.push(frame);
-        Err(())
+        Ok(())
     }
 
     fn read_byte(&mut self) -> u8 {
@@ -416,7 +416,7 @@ impl VM {
                 if let Some(n) = frame.function.name() { n.as_str() } else { "script" }
             );
         }
-
+        eprintln!("Stack end");
         self.clear_stack();
     }
 }

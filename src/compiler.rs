@@ -72,6 +72,10 @@ impl Resolver {
         &self.locals[index]
     }
 
+    pub fn local_mut(&mut self, index: usize) -> &mut Local {
+        &mut self.locals[index]
+    }
+
     /// Returns the index of the local plus whether it was initialized.
     pub fn resolve(&self, token: &str) -> (Option<isize>, bool) {
         for (i, local) in self.locals.iter().enumerate().rev() {
@@ -99,6 +103,7 @@ impl CompilerState {
         } else {
             resolver.add_local(String::new()).unwrap();
         }
+        resolver.local_mut(resolver.n_locals() - 1).depth = 0; //ugly hack!
 
         CompilerState {
             function,
@@ -113,6 +118,7 @@ struct Compiler {
     current: Token,
     failed: bool,
     panic_mode: bool,
+    debug: bool,
     
     state: CompilerState,
 }
@@ -132,7 +138,12 @@ impl Compiler {
 
             failed: false,
             panic_mode: false,
+            debug: false,
         }
+    }
+
+    fn debug(&mut self, debug: bool) {
+        self.debug = debug;
     }
 
     // access
@@ -407,9 +418,15 @@ impl Compiler {
         self.consume(TokenType::LeftBrace, "Expected '{' before function body");
         self.block();
 
+        // return
+        self.emit_return();
+
         // function object
         let new_state = std::mem::replace(&mut self.state, prev_state);
         let function = new_state.function;
+        if self.debug && !self.failed {
+            super::debug::disassemble(function.chunk(), function.name().map_or("script", |x| x.as_str()));
+        }
         self.emit_constant(Constant::Function(function));
     }
 
@@ -599,6 +616,7 @@ impl Compiler {
                 }
             }
         }
+        self.consume(TokenType::RightParen, "Expected ')' after arguments");
 
         count
     }
@@ -709,7 +727,7 @@ impl Compiler {
     fn get_rule(token_type: TokenType) -> ParseRule {
         match token_type {
             // ParseRule(prefix, infix, precedence)
-            TokenType::LeftParen => ParseRule(Some(Self::grouping), None, Precedence::None),
+            TokenType::LeftParen => ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call),
             TokenType::Minus => ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term),
             TokenType::Plus => ParseRule(None, Some(Self::binary), Precedence::Term),
             TokenType::Slash => ParseRule(None, Some(Self::binary), Precedence::Factor),
@@ -729,7 +747,6 @@ impl Compiler {
             TokenType::Identifier => ParseRule(Some(Self::variable), None, Precedence::None),
             TokenType::And => ParseRule(None, Some(Self::and), Precedence::And),
             TokenType::Or => ParseRule(None, Some(Self::or), Precedence::Or),
-            TokenType::Fun => ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call),
             _ => ParseRule(None, None, Precedence::None),
         }
     }
@@ -789,6 +806,7 @@ impl Compiler {
 
 pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
     let mut compiler = Compiler::new(src);
+    compiler.debug(true);
 
     compiler.advance();
     while !compiler.is_at_end() {
@@ -799,7 +817,9 @@ pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
     if compiler.failed() {
         Err(InterpretError::CompileError)
     } else {
-        super::debug::disassemble(&compiler.chunk(), "code");
+        if compiler.debug {
+            super::debug::disassemble(&compiler.chunk(), "script");
+        }
         Ok(compiler.state.function)
     }
 }

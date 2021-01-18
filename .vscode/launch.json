@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": ["tests/fib.lox"],
             "cwd": "${workspaceFolder}"
         },
     ]

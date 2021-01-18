@@ -52,6 +52,12 @@ impl std::fmt::Display for Value {
     }
 }
 
+impl std::fmt::Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Value as std::fmt::Display>::fmt(self, f)
+    }
+}
+
 impl FunctionObject {
     pub fn new() -> Self {
         Self {
