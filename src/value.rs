@@ -8,11 +8,22 @@ pub enum Value {
     Bool(bool),
     String(StringReference),
     Function(FunctionReference),
+    NativeFunction(NativeFunctionPointer),
     Nil,
 }
 
 pub type StringReference = Rc<String>;
 pub type FunctionReference = Rc<FunctionObject>;
+
+// ugly hack because of https://github.com/rust-lang/rust/issues/54508
+#[derive(Clone)]
+pub struct NativeFunctionPointer(pub fn(u8, &[Value]) -> Result<Value, String>, pub &'static str);
+impl PartialEq for NativeFunctionPointer {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 as usize == other.0 as usize && self.1 == other.1
+    }
+}
+// i hate this
 
 #[derive(Clone, PartialEq)]
 pub struct FunctionObject {
@@ -40,6 +51,11 @@ impl Default for Value {
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Value::NativeFunction(native_obj) => {
+                f.write_str("<native fn ")?;
+                f.write_str(native_obj.1)?;
+                f.write_str(">")
+            }
             Value::Number(n) => f.write_str(n.to_string().as_str()),
             Value::Bool(b) => f.write_str(b.to_string().as_str()),
             Value::String(s) => f.write_str(s.as_str()),

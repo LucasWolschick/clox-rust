@@ -1,11 +1,12 @@
 use std::rc::Rc;
+use std::time::{SystemTime, Duration};
 
 use super::{HashSet, HashTable};
 
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{StringReference, Value, FunctionObject, FunctionReference};
+use super::value::{StringReference, Value, FunctionObject, FunctionReference, NativeFunctionPointer};
 use super::{InterpretError, InterpretResult};
 
 struct CallFrame {
@@ -26,13 +27,23 @@ impl VM {
     pub fn new() -> VM {
         let frames = Vec::with_capacity(64);
 
-        VM {
+        let mut vm = VM {
             debug: false,
             stack: Vec::with_capacity(64 * u8::MAX as usize),
             strings: HashSet::default(),
             globals: HashTable::default(),
             frames,
-        }
+        };
+
+        vm.define_native("clock", NativeFunctionPointer (
+            native_clock,
+            "clock",
+        ));
+        vm.define_native("wait", NativeFunctionPointer (
+            native_wait,
+            "wait",
+        ));
+        vm
     }
 
     pub fn debug(&mut self, debug: bool) {
@@ -325,6 +336,20 @@ impl VM {
     fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(),()> {
         if let Value::Function(f_obj) = callable {
             self.call(Rc::clone(&f_obj), arg_count)
+        } else if let Value::NativeFunction(n_f) = callable {
+            let start = self.stack.len() - arg_count as usize;
+            let r = n_f.0(arg_count, &mut self.stack[start..]);
+            self.stack.pop();
+            match r {
+                Ok(r) => {
+                    self.stack.push(r);
+                    Ok(())
+                },
+                Err(s) => {
+                    self.runtime_error(&s);
+                    Err(())
+                },
+            }
         } else {
             self.runtime_error("Only functions and classes are callable");
             Err(())
@@ -419,4 +444,33 @@ impl VM {
         eprintln!("Stack end");
         self.clear_stack();
     }
+
+    fn define_native(&mut self, name: &'static str, function: NativeFunctionPointer) {
+        let s = self.allocate_string(name.to_string());
+        self.globals.insert(s, Value::NativeFunction(function));
+    }
+}
+
+fn native_clock(arg_count: u8, _: &[Value]) -> Result<Value, String> {
+    if arg_count != 0 {
+        return Err(format!("Expected 0 arguments but got {}", arg_count));
+    }
+
+    let t: f64 = SystemTime::UNIX_EPOCH.elapsed().unwrap_or_else(|_| Duration::default()).as_secs_f64();
+    Ok(Value::Number(t))
+}
+
+fn native_wait(arg_count: u8, args: &[Value]) -> Result<Value, String> {
+    if arg_count != 1 {
+        return Err(format!("Expected 1 argument but got {}", arg_count));
+    }
+
+    let t = match args[0] {
+        Value::Number(n) => n,
+        _ => {
+            return Err("Expected number argument".to_string());
+        }
+    };
+    std::thread::sleep(Duration::from_secs_f64(t));
+    Ok(Value::Nil)
 }
