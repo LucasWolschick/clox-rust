@@ -6,11 +6,13 @@ use super::opcodes::OpCode;
 use super::scanner::{Scanner, Token, TokenType};
 use super::InterpretError;
 
+#[derive(Debug)]
 struct Local {
     name: String,
     depth: isize,
 }
 
+#[derive(Debug)]
 struct Resolver {
     locals: Vec<Local>,
     depth: isize,

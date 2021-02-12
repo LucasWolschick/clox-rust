@@ -52,6 +52,7 @@ impl VM {
 
     pub fn interpret(&mut self, function: FunctionObject) -> InterpretResult {
         let rc = Rc::new(function);
+        self.stack.push(Value::Function(Rc::clone(&rc)));
         self.call(rc, 0).unwrap();
         self.run()
     }

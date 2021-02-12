@@ -3,8 +3,11 @@ fun fib(n) {
     return fib(n - 1) + fib(n - 2);
 }
 
-for (var i = 1; i < 33; i = 1 + i) {
+for (var i = 1; i < 36; i = 1 + i) {
+    print i;
     var now = clock();
-    print fib(i);
-    print clock() - now;
+    var f = fib(i);
+    var t = clock() - now;
+    print t;
+    print f;
 }

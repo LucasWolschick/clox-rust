@@ -25,6 +25,8 @@ pub enum InterpretError {
 pub fn repl() {
     let stdin = std::io::stdin();
     let mut vm = vm::VM::new();
+    println!("Lox - REPL");
+    println!("(press Ctrl+Z on an empty line to quit)");
 
     loop {
         print!("> ");
