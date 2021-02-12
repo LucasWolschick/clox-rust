@@ -258,6 +258,11 @@ impl Compiler {
         self.chunk_mut().write_constant(constant, line).unwrap()
     }
 
+    fn emit_closure(&mut self, constant: Constant) -> usize {
+        let line = self.previous.line;
+        self.chunk_mut().write_closure(constant, line).unwrap()
+    }
+
     // parser
     fn declaration(&mut self) {
         if self.match_advance(TokenType::Fun) {
@@ -429,7 +434,7 @@ impl Compiler {
         if self.debug && !self.failed {
             super::debug::disassemble(function.chunk(), function.name().map_or("script", |x| x.as_str()));
         }
-        self.emit_constant(Constant::Function(function));
+        self.emit_closure(Constant::Function(function));
     }
 
     fn print_statement(&mut self) {

@@ -75,6 +75,22 @@ impl Chunk {
         Ok(i)
     }
 
+    pub fn write_closure(&mut self, constant: Constant, line: isize) -> Result<usize, ()> {
+        if self.constants.len() >= isize::MAX as usize {
+            return Err(());
+        }
+
+        let i = self.add_constant(constant);
+        if i > u8::MAX as usize {
+            self.write_op(OpCode::LongClosure, line);
+            self.write_usize(i, line);
+        } else {
+            self.write_op(OpCode::Closure, line);
+            self.write(i as u8, line);
+        }
+        Ok(i)
+    }
+
     pub fn patch(&mut self, offset: usize, value: u8) {
         self.code[offset] = value;
     }

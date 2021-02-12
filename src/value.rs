@@ -9,11 +9,13 @@ pub enum Value {
     String(StringReference),
     Function(FunctionReference),
     NativeFunction(NativeFunctionPointer),
+    Closure(ClosureReference),
     Nil,
 }
 
 pub type StringReference = Rc<String>;
 pub type FunctionReference = Rc<FunctionObject>;
+pub type ClosureReference = Rc<ClosureObject>;
 
 // ugly hack because of https://github.com/rust-lang/rust/issues/54508
 #[derive(Clone)]
@@ -63,6 +65,10 @@ impl std::fmt::Display for Value {
                 Some(s) => f.write_fmt(format_args!("<fn {}>", s)),
                 None => f.write_str("<script>")
             }
+            Value::Closure(closure) => match &closure.function.name {
+                Some(s) => f.write_fmt(format_args!("<fn {}>", s)),
+                None => f.write_str("<script>")
+            }
             Value::Nil => f.write_str("nil"),
         }
     }
@@ -97,5 +103,16 @@ impl FunctionObject {
 
     pub fn chunk_mut(&mut self) -> &mut Chunk {
         &mut self.chunk
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ClosureObject {
+    pub function: FunctionReference,
+}
+
+impl ClosureObject {
+    pub fn new(function: FunctionReference) -> Self {
+        Self { function }
     }
 }

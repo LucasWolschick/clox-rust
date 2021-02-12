@@ -3,6 +3,8 @@
 pub enum OpCode {
     Constant,
     LongConstant,
+    Closure,
+    LongClosure,
 
     DefineGlobal,
     DefineLongGlobal,

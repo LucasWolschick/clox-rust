@@ -25,10 +25,10 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::Return => simple_instruction("OP_RETURN", offset),
         OpCode::Constant => constant_instruction("OP_CONSTANT", &chunk, offset),
         OpCode::LongConstant => long_constant_instruction("OP_CONSTANT_LONG", &chunk, offset),
+        OpCode::Closure => closure_instruction(&chunk, offset),
+        OpCode::LongClosure => long_closure_instruction(&chunk, offset),
         OpCode::DefineGlobal => constant_instruction("OP_DEFINE_GLOBAL", &chunk, offset),
-        OpCode::DefineLongGlobal => {
-            long_constant_instruction("OP_DEFINE_GLOBAL_LONG", &chunk, offset)
-        }
+        OpCode::DefineLongGlobal => long_constant_instruction("OP_DEFINE_GLOBAL_LONG", &chunk, offset),
         OpCode::GetGlobal => constant_instruction("OP_GET_GLOBAL", &chunk, offset),
         OpCode::GetLongGlobal => long_constant_instruction("OP_GET_GLOBAL_LONG", &chunk, offset),
         OpCode::SetGlobal => constant_instruction("OP_SET_GLOBAL", &chunk, offset),
@@ -78,16 +78,28 @@ fn constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {
     offset + 2
 }
 
-fn jump_instruction(title: &str, sign: i32, chunk: &Chunk, offset: usize) -> usize {
-    let jump = (*chunk.at(offset + 1) as i16) << 8;
-    let jump = jump | *chunk.at(offset + 2) as i16;
+fn closure_instruction(chunk: &Chunk, offset: usize) -> usize {
+    let constant = *chunk.at(offset + 1);
     println!(
-        "{:16} {:4} -> {}",
-        title,
-        offset,
-        (offset + 3) as i32 + sign * jump as i32
+        "{:16} {:4} '{}'",
+        "OP_CLOSURE",
+        constant,
+        chunk.get_constant(constant as usize)
     );
-    offset + 3
+    offset + 2
+}
+
+fn long_closure_instruction(chunk: &Chunk, offset: usize) -> usize {
+    let constant = *chunk.at(offset+1) as usize  // first byte
+        | (*chunk.at(offset+2) as usize) << 8 // second byte
+        | (*chunk.at(offset+3) as usize) << 16; // third byte
+    println!(
+        "{:16} {:4} '{}'",
+        "OP_LONG_CLOSURE",
+        constant,
+        chunk.get_constant(constant as usize)
+    );
+    offset + 4
 }
 
 fn long_constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {
@@ -101,4 +113,16 @@ fn long_constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize
         chunk.get_constant(constant as usize)
     );
     offset + 4
+}
+
+fn jump_instruction(title: &str, sign: i32, chunk: &Chunk, offset: usize) -> usize {
+    let jump = (*chunk.at(offset + 1) as i16) << 8;
+    let jump = jump | *chunk.at(offset + 2) as i16;
+    println!(
+        "{:16} {:4} -> {}",
+        title,
+        offset,
+        (offset + 3) as i32 + sign * jump as i32
+    );
+    offset + 3
 }

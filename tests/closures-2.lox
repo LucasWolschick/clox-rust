@@ -1,0 +1,20 @@
+var x = "global";
+fun outer() {
+  var x = "outer";
+  fun inner() {
+    print x;
+  }
+  inner();
+}
+outer();
+
+fun makeClosure() {
+  var local = "local";
+  fun closure() {
+    print local;
+  }
+  return closure;
+}
+
+var closure = makeClosure();
+closure();

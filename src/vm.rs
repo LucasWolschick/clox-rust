@@ -6,11 +6,11 @@ use super::{HashSet, HashTable};
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{StringReference, Value, FunctionObject, FunctionReference, NativeFunctionPointer};
+use super::value::{StringReference, Value, FunctionObject, NativeFunctionPointer, ClosureObject, ClosureReference};
 use super::{InterpretError, InterpretResult};
 
 struct CallFrame {
-    function: FunctionReference,
+    closure: ClosureReference,
     ip: usize,
     slot_offset: usize,
 }
@@ -52,14 +52,15 @@ impl VM {
 
     pub fn interpret(&mut self, function: FunctionObject) -> InterpretResult {
         let rc = Rc::new(function);
-        self.stack.push(Value::Function(Rc::clone(&rc)));
-        self.call(rc, 0).unwrap();
+        let closure = Rc::new(ClosureObject::new(rc));
+        self.stack.push(Value::Closure(Rc::clone(&closure)));
+        self.call(closure, 0).unwrap();
         self.run()
     }
 
     fn chunk(&self) -> &Chunk {
         let frame = self.frames.last().unwrap();
-        frame.function.chunk()
+        frame.closure.function.chunk()
     }
 
     // fn chunk_mut(&mut self) -> &mut Chunk {
@@ -78,7 +79,7 @@ impl VM {
                 }
                 println!();
                 let frame = self.frames.last_mut().unwrap();
-                debug::disassemble_instruction(frame.function.chunk(), frame.ip - 1);
+                debug::disassemble_instruction(frame.closure.function.chunk(), frame.ip - 1);
             }
 
             match OpCode::from(instruction) {
@@ -157,6 +158,28 @@ impl VM {
                     } else {
                         self.runtime_error("Attempt to get non-string global");
                         return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::Closure => {
+                    let function = self.read_constant();
+                    if let Constant::Function(f) = function {
+                        let function = Rc::new(f.clone());
+                        let closure = ClosureObject::new(function);
+                        self.stack.push(Value::Closure(Rc::new(closure)));
+                    } else {
+                        self.runtime_error("Attempt to make closure out of non-function constant");
+                        return Err(InterpretError::RuntimeError)
+                    }
+                }
+                OpCode::LongClosure => {
+                    let function = self.read_long_constant();
+                    if let Constant::Function(f) = function {
+                        let function = Rc::new(f.clone());
+                        let closure = ClosureObject::new(function);
+                        self.stack.push(Value::Closure(Rc::new(closure)));
+                    } else {
+                        self.runtime_error("Attempt to make closure out of non-function constant");
+                        return Err(InterpretError::RuntimeError)
                     }
                 }
                 OpCode::SetGlobal => {
@@ -335,8 +358,8 @@ impl VM {
     }
 
     fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(),()> {
-        if let Value::Function(f_obj) = callable {
-            self.call(Rc::clone(&f_obj), arg_count)
+        if let Value::Closure(c_obj) = callable {
+            self.call(Rc::clone(&c_obj), arg_count)
         } else if let Value::NativeFunction(n_f) = callable {
             let start = self.stack.len() - arg_count as usize;
             let r = n_f.0(arg_count, &mut self.stack[start..]);
@@ -357,9 +380,9 @@ impl VM {
         }
     }
 
-    fn call(&mut self, function: FunctionReference, arg_count: u8) -> Result<(),()> {
-        if function.arity != arg_count {
-            self.runtime_error(format!("Expected {} arguments but got {}", function.arity, arg_count).as_str());
+    fn call(&mut self, closure: ClosureReference, arg_count: u8) -> Result<(),()> {
+        if closure.function.arity != arg_count {
+            self.runtime_error(format!("Expected {} arguments but got {}", closure.function.arity, arg_count).as_str());
             return Err(());
         }
 
@@ -369,7 +392,7 @@ impl VM {
         }
         
         let frame = CallFrame {
-            function,
+            closure,
             ip: 0,
             slot_offset: (self.stack.len() as isize - arg_count as isize - 1) as usize,
         };
@@ -380,13 +403,13 @@ impl VM {
     fn read_byte(&mut self) -> u8 {
         let frame = self.frames.last_mut().unwrap();
         frame.ip += 1;
-        *frame.function.chunk().at(frame.ip - 1)
+        *frame.closure.function.chunk().at(frame.ip - 1)
     }
 
     fn read_short(&mut self) -> u16 {
         let frame = self.frames.last_mut().unwrap();
         frame.ip += 2;
-        (*frame.function.chunk().at(frame.ip - 2) as u16) << 8 | *frame.function.chunk().at(frame.ip - 1) as u16
+        (*frame.closure.function.chunk().at(frame.ip - 2) as u16) << 8 | *frame.closure.function.chunk().at(frame.ip - 1) as u16
     }
 
     fn allocate_string(&mut self, string: String) -> StringReference {
@@ -438,8 +461,8 @@ impl VM {
             let instruction = frame.ip - 1;
             eprintln!(
                 "[line {}] in {}",
-                frame.function.chunk().line_at_offset(instruction),
-                if let Some(n) = frame.function.name() { n.as_str() } else { "script" }
+                frame.closure.function.chunk().line_at_offset(instruction),
+                if let Some(n) = frame.closure.function.name() { n.as_str() } else { "script" }
             );
         }
         eprintln!("Stack end");
