@@ -39,7 +39,7 @@ pub fn repl() {
 
         let function = compiler::compile(&line);
         if let Ok(function) = function {
-            vm.debug(false);
+            vm.debug(std::env::var("CLOX_DEBUG").is_ok());
             let _ = vm.interpret(function);
         }
     }
@@ -54,6 +54,6 @@ pub fn file(mut file: File) {
 fn interpret(source: &str) -> InterpretResult {
     let function = compiler::compile(source)?;
     let mut vm = vm::VM::new(); //todo: persist state
-    vm.debug(false);
+    vm.debug(std::env::var("CLOX_DEBUG").is_ok());
     vm.interpret(function)
 }

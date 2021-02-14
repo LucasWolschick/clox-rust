@@ -3,6 +3,7 @@
 pub enum OpCode {
     Constant,
     LongConstant,
+
     Closure,
     LongClosure,
 
@@ -17,6 +18,10 @@ pub enum OpCode {
 
     GetLocal,
     SetLocal,
+
+    GetUpvalue,
+    SetUpvalue,
+    CloseUpvalue,
 
     JumpIfFalse,
     Jump,

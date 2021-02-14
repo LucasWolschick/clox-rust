@@ -1,4 +1,4 @@
-use super::chunk::Chunk;
+use super::chunk::{Chunk, Constant};
 use super::opcodes::OpCode;
 
 pub fn disassemble(chunk: &Chunk, title: &str) {
@@ -35,6 +35,9 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::SetLongGlobal => long_constant_instruction("OP_SET_GLOBAL_LONG", &chunk, offset),
         OpCode::GetLocal => byte_instruction("OP_GET_LOCAL", &chunk, offset),
         OpCode::SetLocal => byte_instruction("OP_SET_LOCAL", &chunk, offset),
+        OpCode::GetUpvalue => byte_instruction("OP_GET_UPVALUE", &chunk, offset),
+        OpCode::SetUpvalue => byte_instruction("OP_SET_UPVALUE", &chunk, offset),
+        OpCode::CloseUpvalue => simple_instruction("OP_CLOSE_UPVALUE", offset),
         OpCode::Negate => simple_instruction("OP_NEGATE", offset),
         OpCode::Add => simple_instruction("OP_ADD", offset),
         OpCode::Subtract => simple_instruction("OP_SUBTRACT", offset),
@@ -79,13 +82,27 @@ fn constant_instruction(title: &str, chunk: &Chunk, offset: usize) -> usize {
 }
 
 fn closure_instruction(chunk: &Chunk, offset: usize) -> usize {
+    let mut offset = offset;
     let constant = *chunk.at(offset + 1);
+    let c_obj = chunk.get_constant(constant as usize);
     println!(
         "{:16} {:4} '{}'",
         "OP_CLOSURE",
         constant,
-        chunk.get_constant(constant as usize)
+        &c_obj
     );
+
+    if let Constant::Function(f) = c_obj {
+        for _ in 0..f.upvalues {
+            offset += 1;
+            let is_local = chunk.at(offset);
+            offset += 1;
+            let index = chunk.at(offset);
+            println!("{:04}      |                     {} {}",
+                offset, if *is_local == 1 {"local"} else {"upvalue"}, index);
+        }
+    }
+
     offset + 2
 }
 

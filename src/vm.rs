@@ -1,12 +1,16 @@
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::time::{SystemTime, Duration};
+
+//todo: fix issue with OOB indexing @ vm.rs:213:37
+//todo: Closed Upvalues section
 
 use super::{HashSet, HashTable};
 
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{StringReference, Value, FunctionObject, NativeFunctionPointer, ClosureObject, ClosureReference};
+use super::value::{StringReference, Value, FunctionObject, NativeFunctionPointer, ClosureObject, ClosureReference, Upvalue, UpvalueReference};
 use super::{InterpretError, InterpretResult};
 
 struct CallFrame {
@@ -21,6 +25,7 @@ pub struct VM {
     strings: HashSet<StringReference>,
     globals: HashTable<StringReference, Value>,
     frames: Vec<CallFrame>,
+    open_upvalues: Vec<UpvalueReference>,
 }
 
 impl VM {
@@ -33,6 +38,7 @@ impl VM {
             strings: HashSet::default(),
             globals: HashTable::default(),
             frames,
+            open_upvalues: Vec::new(),
         };
 
         vm.define_native("clock", NativeFunctionPointer (
@@ -85,7 +91,7 @@ impl VM {
             match OpCode::from(instruction) {
                 OpCode::Return => {
                     let result = self.stack.pop().unwrap();
-                    
+                    self.close_upvalues(self.frames.last().unwrap().slot_offset);
                     let frame = self.frames.pop().unwrap();
                     if self.frames.is_empty() {
                         self.stack.pop();
@@ -164,7 +170,20 @@ impl VM {
                     let function = self.read_constant();
                     if let Constant::Function(f) = function {
                         let function = Rc::new(f.clone());
-                        let closure = ClosureObject::new(function);
+                        let mut closure = ClosureObject::new(function);
+                        
+                        for _ in 0..closure.n_upvalues {
+                            let is_local = self.read_byte() == 1;
+                            let index = self.read_byte() as usize;
+                            if is_local {
+                                let slot_offset = self.frames.last().unwrap().slot_offset;
+                                let upvalue = self.capture_upvalue(slot_offset + index);
+                                closure.upvalues.push(upvalue);
+                            } else {
+                                let upvalue = self.frames.last().unwrap().closure.upvalues[index as usize].clone();
+                                closure.upvalues.push(upvalue);
+                            }
+                        }
                         self.stack.push(Value::Closure(Rc::new(closure)));
                     } else {
                         self.runtime_error("Attempt to make closure out of non-function constant");
@@ -175,12 +194,49 @@ impl VM {
                     let function = self.read_long_constant();
                     if let Constant::Function(f) = function {
                         let function = Rc::new(f.clone());
-                        let closure = ClosureObject::new(function);
+                        let mut closure = ClosureObject::new(function);
+                        for _ in 0..closure.n_upvalues {
+                            let is_local = self.read_byte() == 1;
+                            let index = self.read_byte() as usize;
+                            if is_local {
+                                let slot_offset = self.frames.last().unwrap().slot_offset;
+                                let upvalue = self.capture_upvalue(slot_offset + index);
+                                closure.upvalues.push(upvalue);
+                            } else {
+                                let upvalue = self.frames.last().unwrap().closure.upvalues[index as usize].clone();
+                                closure.upvalues.push(upvalue);
+                            }
+                        }
                         self.stack.push(Value::Closure(Rc::new(closure)));
                     } else {
                         self.runtime_error("Attempt to make closure out of non-function constant");
                         return Err(InterpretError::RuntimeError)
                     }
+                }
+                OpCode::GetUpvalue => {
+                    let upvalue_i = self.read_byte() as usize;
+                    let upvalue = &self.frames.last().unwrap().closure.upvalues[upvalue_i];
+                    match &*upvalue.borrow() { // this shouldn't work???????
+                        Upvalue::Open {slot: index} => self.stack.push(self.stack[*index].clone()),
+                        Upvalue::Closed {value: val} => self.stack.push(val.clone()),
+                    };
+                }
+                OpCode::SetUpvalue => {
+                    let slot = self.read_byte() as usize;
+                    let stack_value = self.stack.last().unwrap().clone();
+                    let upvalue = &self.frames.last_mut().unwrap().closure.upvalues[slot];
+                    match *upvalue.borrow_mut() {
+                        Upvalue::Open {slot: index} => self.stack[index] = stack_value,
+                        Upvalue::Closed {value: ref mut val} => {
+                            *val = stack_value;
+                        }
+                    }
+                    // TODO: this might not work because .clone() might duplicate the upvalue and render it useless!
+                }
+                OpCode::CloseUpvalue => {
+                    let idx = self.stack.len()-1;
+                    self.close_upvalues(idx);
+                    self.stack.pop();
                 }
                 OpCode::SetGlobal => {
                     let name = self.read_constant();
@@ -355,6 +411,44 @@ impl VM {
                 }
             }
         }
+    }
+
+    fn capture_upvalue(&mut self, index: usize) -> UpvalueReference {
+        for open_upvalue in self.open_upvalues.iter().rev() {
+            match *open_upvalue.borrow() {
+                Upvalue::Open { slot } if slot <= index => {
+                    if slot == index {
+                        return Rc::clone(open_upvalue);
+                    } else {
+                        break;
+                    }
+                },
+                _ => (),
+            }
+        }
+
+        let new_upvalue = Rc::new(RefCell::new(Upvalue::Open { slot: index }));
+        self.open_upvalues.push(Rc::clone(&new_upvalue));
+
+        new_upvalue
+    }
+
+    fn close_upvalues(&mut self, last: usize) {
+        let mut i = self.open_upvalues.len() as isize;
+        loop {
+            if i < 1 {
+                break;
+            }
+            let upvalue = &self.open_upvalues[(i-1) as usize];
+            let location = match *upvalue.borrow() {Upvalue::Open {slot} => slot, _ => unreachable!("Closed upvalues shouldn't be on the open upvalues list")};
+            if location < last {
+                break;
+            }
+            upvalue.replace_with(|_| Upvalue::Closed {value: self.stack[location].clone()});
+            i -= 1;
+        }
+
+        self.open_upvalues.truncate(i as usize);
     }
 
     fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(),()> {

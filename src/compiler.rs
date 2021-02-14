@@ -10,6 +10,7 @@ use super::InterpretError;
 struct Local {
     name: String,
     depth: isize,
+    captured: bool
 }
 
 #[derive(Debug)]
@@ -57,7 +58,7 @@ impl Resolver {
             return Err(());
         }
 
-        let local = Local { name, depth: -1 };
+        let local = Local { name, depth: -1, captured: false };
         self.locals.push(local);
         Ok(())
     }
@@ -79,7 +80,7 @@ impl Resolver {
     }
 
     /// Returns the index of the local plus whether it was initialized.
-    pub fn resolve(&self, token: &str) -> (Option<isize>, bool) {
+    pub fn resolve_local(&self, token: &str) -> (Option<isize>, bool) {
         for (i, local) in self.locals.iter().enumerate().rev() {
             if local.name == token {
                 return (Some(i as isize), local.depth != -1);
@@ -89,13 +90,19 @@ impl Resolver {
     }
 }
 
+struct Upvalue {
+    is_local: bool,
+    index: isize,
+}
+
 struct CompilerState {
     function: FunctionObject,
+    upvalues: Vec<Upvalue>,
     resolver: Resolver,
 }
 
 impl CompilerState {
-    fn new(name: Option<StringReference>) -> Self {
+    fn new(name: Option<StringReference>, _index: usize) -> Self {
         let mut resolver = Resolver::new();
         let mut function = FunctionObject::new();
         
@@ -105,11 +112,15 @@ impl CompilerState {
         } else {
             resolver.add_local(String::new()).unwrap();
         }
-        resolver.local_mut(resolver.n_locals() - 1).depth = 0; //ugly hack!
+
+        let zeroth_local = resolver.local_mut(resolver.n_locals() - 1);
+        zeroth_local.depth = 0;
+        zeroth_local.captured = false;
 
         CompilerState {
             function,
             resolver,
+            upvalues: Vec::new(),
         }
     }
 }
@@ -122,7 +133,7 @@ struct Compiler {
     panic_mode: bool,
     debug: bool,
     
-    state: CompilerState,
+    state: Vec<CompilerState>,
 }
 
 impl Compiler {
@@ -131,7 +142,7 @@ impl Compiler {
         resolver.add_local(String::new()).unwrap();
 
         Compiler {
-            state: CompilerState::new(None),
+            state: vec![CompilerState::new(None, 0)],
 
             scanner: Scanner::new(src),
 
@@ -150,11 +161,11 @@ impl Compiler {
 
     // access
     fn chunk(&self) -> &Chunk {
-        &self.state.function.chunk()
+        &self.state.last().unwrap().function.chunk()
     }
 
     fn chunk_mut(&mut self) -> &mut Chunk {
-        self.state.function.chunk_mut()
+        self.state.last_mut().unwrap().function.chunk_mut()
     }
 
     // controls
@@ -280,7 +291,7 @@ impl Compiler {
 
     fn fun_declaration(&mut self) {
         let global = self.parse_variable("Expected function name");
-        self.state.resolver.mark_initialized();
+        self.state.last_mut().unwrap().resolver.mark_initialized();
         self.function();
         self.define_variable(global);
     }
@@ -305,7 +316,7 @@ impl Compiler {
         self.consume(TokenType::Identifier, err);
 
         self.declare_variable();
-        if self.state.resolver.depth() > 0 {
+        if self.state.last().unwrap().resolver.depth() > 0 {
             0
         } else {
             self.identifier_constant(&self.previous.clone())
@@ -313,17 +324,17 @@ impl Compiler {
     }
 
     fn declare_variable(&mut self) {
-        if self.state.resolver.depth() == 0 {
+        if self.state.last().unwrap().resolver.depth() == 0 {
             return;
         }
 
         let name = self.previous.lexeme.clone();
 
         // handles conflicts
-        if self.state.resolver.n_locals() > 0 {
-            for i in (self.state.resolver.n_locals() - 1)..=0 {
-                let local = self.state.resolver.local(i as usize);
-                if local.depth != -1 && local.depth < self.state.resolver.depth() {
+        if self.state.last().unwrap().resolver.n_locals() > 0 {
+            for i in (self.state.last().unwrap().resolver.n_locals() - 1)..=0 {
+                let local = self.state.last().unwrap().resolver.local(i as usize);
+                if local.depth != -1 && local.depth < self.state.last().unwrap().resolver.depth() {
                     break;
                 }
 
@@ -333,7 +344,7 @@ impl Compiler {
             }
         }
 
-        self.state.resolver.add_local(name).unwrap_or_else(|_| {
+        self.state.last_mut().unwrap().resolver.add_local(name).unwrap_or_else(|_| {
             self.error("Too many local variables in function");
         });
     }
@@ -343,8 +354,8 @@ impl Compiler {
     }
 
     fn define_variable(&mut self, global: usize) {
-        if self.state.resolver.depth() > 0 {
-            self.state.resolver.mark_initialized();
+        if self.state.last().unwrap().resolver.depth() > 0 {
+            self.state.last_mut().unwrap().resolver.mark_initialized();
             return;
         }
 
@@ -358,13 +369,18 @@ impl Compiler {
     }
 
     fn begin_scope(&mut self) {
-        self.state.resolver.begin_scope();
+        self.state.last_mut().unwrap().resolver.begin_scope();
     }
 
     fn end_scope(&mut self) {
-        let n = self.state.resolver.end_scope();
+        let n = self.state.last_mut().unwrap().resolver.end_scope();
         for _ in 0..n {
-            self.emit_opcode(OpCode::Pop);
+            let resolver = &self.state.last().unwrap().resolver;
+            if resolver.locals[resolver.n_locals() - 1].captured {
+                self.emit_opcode(OpCode::CloseUpvalue)
+            } else {
+                self.emit_opcode(OpCode::Pop);
+            }
         }
     }
 
@@ -398,17 +414,17 @@ impl Compiler {
 
     fn function(&mut self) {
         let name = Rc::new(self.previous.lexeme.clone());
-        let prev_state = std::mem::replace(&mut self.state, CompilerState::new(Some(name)));
+        self.state.push(CompilerState::new(Some(name), self.state.len()));
         self.begin_scope();
 
         // parameter list
         self.consume(TokenType::LeftParen, "Expected '(' after function name");
         if !self.check(TokenType::RightParen) {
             loop {
-                if self.state.function.arity == 255 {
+                if self.state.last().unwrap().function.arity == 255 {
                     self.error_at_current("Cannot have more than 255 parameters");
                 } else {
-                    self.state.function.arity += 1;
+                    self.state.last_mut().unwrap().function.arity += 1;
                 }
 
                 let param_cons = self.parse_variable("Expected parameter name");
@@ -429,12 +445,24 @@ impl Compiler {
         self.emit_return();
 
         // function object
-        let new_state = std::mem::replace(&mut self.state, prev_state);
+        let new_state = self.state.pop().unwrap();
         let function = new_state.function;
         if self.debug && !self.failed {
             super::debug::disassemble(function.chunk(), function.name().map_or("script", |x| x.as_str()));
         }
+
+        let func_upvalues = function.upvalues;
         self.emit_closure(Constant::Function(function));
+
+        // process locals
+        for i in 0..func_upvalues {
+            let upvalue = &new_state.upvalues[i as usize];
+            let is_local = upvalue.is_local as u8;
+            let index = upvalue.index as u8; // should be good?
+
+            self.emit_byte(is_local);
+            self.emit_byte(index);
+        }
     }
 
     fn print_statement(&mut self) {
@@ -467,7 +495,7 @@ impl Compiler {
     }
 
     fn return_statement(&mut self) {
-        if self.state.function.name().is_none() {
+        if self.state.last().unwrap().function.name().is_none() {
             self.error("Cannot return from top-level code");
         }
 
@@ -669,14 +697,61 @@ impl Compiler {
         self.named_variable(&self.previous.clone(), can_assign);
     }
 
+    fn resolve_upvalue(&mut self, name: &str, depth: usize) -> Option<isize> {
+        if depth == 0 {
+            // root level. we're looking at a global
+            return None;
+        }
+        
+        if let (Some(arg), bool) = self.state[depth - 1].resolver.resolve_local(name) {
+            // we got an upvalue
+            if !bool {
+                self.error("Can't read local variable in own initializer");
+            }
+            self.state[depth - 1].resolver.locals[arg as usize].captured = true;
+            return Some(self.add_upvalue(depth, arg, true));
+        }
+
+        if let Some(arg) = self.resolve_upvalue(name, depth - 1) {
+            // look in other scopes
+            return Some(self.add_upvalue(depth, arg, false));
+        }
+        
+        None
+    }
+
+    fn add_upvalue(&mut self, depth: usize, index: isize, is_local: bool) -> isize {
+        let state = &self.state[depth];
+        if let Some((i, _)) = state.upvalues.iter().enumerate().find(|(_, u)| {
+            u.index == index && u.is_local == is_local
+        }) {
+            return i as isize;
+        }
+
+        if state.upvalues.len() >= u8::MAX as usize {
+            self.error("Too many upvalues in function");
+            return 0;
+        }
+
+        self.state[depth].upvalues.push(Upvalue {
+            is_local,
+            index,
+        });
+        self.state[depth].function.upvalues += 1;
+        self.state[depth].upvalues.len() as isize - 1
+    }
+
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
         let (arg, get_op, set_op, long) =
-            if let (Some(arg), initialized) = self.state.resolver.resolve(&name.lexeme) {
+            if let (Some(arg), initialized) = self.state.last().unwrap().resolver.resolve_local(&name.lexeme) {
                 // we're dealing with locals.
                 if !initialized {
                     self.error("Can't read local variable in own initializer");
                 }
                 (arg as usize, OpCode::GetLocal, OpCode::SetLocal, false)
+            } else if let Some(arg) = self.resolve_upvalue(&name.lexeme, self.state.len()-1) {
+                // we're dealing with up values
+                (arg as usize, OpCode::GetUpvalue, OpCode::SetUpvalue, false)
             } else {
                 // we're dealing with globals.
                 let arg = self.identifier_constant(name) as usize;
@@ -813,7 +888,7 @@ impl Compiler {
 
 pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
     let mut compiler = Compiler::new(src);
-    compiler.debug(true);
+    compiler.debug(std::env::var("CLOX_DEBUG").is_ok());
 
     compiler.advance();
     while !compiler.is_at_end() {
@@ -827,7 +902,7 @@ pub fn compile(src: &str) -> Result<FunctionObject, InterpretError> {
         if compiler.debug {
             super::debug::disassemble(&compiler.chunk(), "script");
         }
-        Ok(compiler.state.function)
+        Ok(compiler.state.pop().unwrap().function)
     }
 }
 

@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::cell::RefCell;
 
 use super::chunk::Chunk;
 
@@ -16,6 +17,13 @@ pub enum Value {
 pub type StringReference = Rc<String>;
 pub type FunctionReference = Rc<FunctionObject>;
 pub type ClosureReference = Rc<ClosureObject>;
+pub type UpvalueReference = Rc<RefCell<Upvalue>>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Upvalue {
+    Open {slot: usize},
+    Closed {value: Value},
+}
 
 // ugly hack because of https://github.com/rust-lang/rust/issues/54508
 #[derive(Clone)]
@@ -30,6 +38,7 @@ impl PartialEq for NativeFunctionPointer {
 #[derive(Clone, PartialEq)]
 pub struct FunctionObject {
     pub arity: u8,
+    pub upvalues: i32,
     chunk: Chunk,
     name: Option<StringReference>,
 }
@@ -84,6 +93,7 @@ impl FunctionObject {
     pub fn new() -> Self {
         Self {
             arity: 0,
+            upvalues: 0,
             name: None,
             chunk: Chunk::new(),
         }
@@ -109,10 +119,13 @@ impl FunctionObject {
 #[derive(Clone, PartialEq)]
 pub struct ClosureObject {
     pub function: FunctionReference,
+    pub upvalues: Vec<UpvalueReference>,
+    pub n_upvalues: usize,
 }
 
 impl ClosureObject {
     pub fn new(function: FunctionReference) -> Self {
-        Self { function }
+        let upvalues = function.upvalues as usize;
+        Self { function, upvalues: Vec::with_capacity(upvalues), n_upvalues: upvalues }
     }
 }

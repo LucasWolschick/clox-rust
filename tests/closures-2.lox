@@ -1,20 +1,11 @@
-var x = "global";
 fun outer() {
-  var x = "outer";
+  var x = "outside";
   fun inner() {
     print x;
   }
-  inner();
-}
-outer();
 
-fun makeClosure() {
-  var local = "local";
-  fun closure() {
-    print local;
-  }
-  return closure;
+  return inner;
 }
 
-var closure = makeClosure();
+var closure = outer();
 closure();
