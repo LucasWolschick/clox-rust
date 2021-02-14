@@ -1,4 +1,4 @@
-use super::value::FunctionObject;
+use super::value::{FunctionObject, ClassObject};
 use super::opcodes::OpCode;
 
 // compile-time constant types. these are converted to Value during runtime.

@@ -276,7 +276,9 @@ impl Compiler {
 
     // parser
     fn declaration(&mut self) {
-        if self.match_advance(TokenType::Fun) {
+        if self.match_advance(TokenType::Class) {
+            self.class_declaration();
+        } else if self.match_advance(TokenType::Fun) {
             self.fun_declaration();
         } else if self.match_advance(TokenType::Var) {
             self.var_declaration();
@@ -287,6 +289,25 @@ impl Compiler {
         if self.panic_mode {
             self.synchronize();
         }
+    }
+
+    fn class_declaration(&mut self) {
+        self.consume(TokenType::Identifier, "Expected class name");
+        let name_constant = self.identifier_constant(&self.previous.clone());
+        self.declare_variable();
+
+        if name_constant > u8::MAX as usize {
+            self.emit_opcode(OpCode::LongClass);
+            self.emit_usize(name_constant);
+        } else {
+            self.emit_opcode(OpCode::Class);
+            self.emit_byte(name_constant as u8);
+        }
+        
+        self.define_variable(name_constant);
+
+        self.consume(TokenType::LeftBrace, "Expected '{' before class body");
+        self.consume(TokenType::RightBrace, "Expected '}' after class body");
     }
 
     fn fun_declaration(&mut self) {
@@ -697,6 +718,20 @@ impl Compiler {
         self.named_variable(&self.previous.clone(), can_assign);
     }
 
+    fn dot(&mut self, can_assign: bool) {
+        self.consume(TokenType::Identifier, "Expected property name after '.'");
+        let name = self.identifier_constant(&self.previous.clone());
+
+        if can_assign && self.match_advance(TokenType::Equal) {
+            self.expression();
+            self.emit_opcode(OpCode::SetProperty);
+            self.emit_byte(name as u8);
+        } else {
+            self.emit_opcode(OpCode::GetProperty);
+            self.emit_byte(name as u8);
+        }
+    }
+
     fn resolve_upvalue(&mut self, name: &str, depth: usize) -> Option<isize> {
         if depth == 0 {
             // root level. we're looking at a global
@@ -829,6 +864,7 @@ impl Compiler {
             TokenType::Identifier => ParseRule(Some(Self::variable), None, Precedence::None),
             TokenType::And => ParseRule(None, Some(Self::and), Precedence::And),
             TokenType::Or => ParseRule(None, Some(Self::or), Precedence::Or),
+            TokenType::Dot => ParseRule(None, Some(Self::dot), Precedence::Call),
             _ => ParseRule(None, None, Precedence::None),
         }
     }

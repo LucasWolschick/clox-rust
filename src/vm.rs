@@ -10,7 +10,7 @@ use super::{HashSet, HashTable};
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{StringReference, Value, FunctionObject, NativeFunctionPointer, ClosureObject, ClosureReference, Upvalue, UpvalueReference};
+use super::value::{StringReference, Value, FunctionObject, NativeFunctionPointer, ClosureObject, ClosureReference, Upvalue, UpvalueReference, ClassObject, ClassReference, InstanceObject, InstanceReference};
 use super::{InterpretError, InterpretResult};
 
 struct CallFrame {
@@ -195,6 +195,7 @@ impl VM {
                     if let Constant::Function(f) = function {
                         let function = Rc::new(f.clone());
                         let mut closure = ClosureObject::new(function);
+                        
                         for _ in 0..closure.n_upvalues {
                             let is_local = self.read_byte() == 1;
                             let index = self.read_byte() as usize;
@@ -281,6 +282,123 @@ impl VM {
                     let slot = self.read_byte();
                     let front = self.stack.last().unwrap().clone();
                     self.stack[offset + slot as usize] = front;
+                }
+                OpCode::Class => {
+                    let string = match self.read_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        },
+                        _ => unreachable!("After class declarations there should only be string constants"),
+                    };
+                    let class = ClassObject::new(string);
+                    let rc = Rc::new(class);
+                    self.stack.push(Value::Class(rc));
+                }
+                OpCode::LongClass => {
+                    let string = match self.read_long_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        },
+                        _ => unreachable!("After class declarations there should only be string constants"),
+                    };
+                    let class = ClassObject::new(string);
+                    let rc = Rc::new(class);
+                    self.stack.push(Value::Class(rc));
+                }
+                OpCode::GetProperty => {
+                    let name = match self.read_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        },
+                        _ => unreachable!("After property accesses there should only be string constants"),
+                    };
+
+                    if let Value::Instance(instance) = self.peek_stack(0).unwrap() {
+                        // funky code below is because of the borrow checker...
+                        let value = if let Some(value) = instance.borrow().fields.get(&name) {
+                            Some(value.clone())
+                        } else {
+                            None
+                        };
+
+                        if let Some(value) = value {
+                            self.stack.pop();
+                            self.stack.push(value);
+                        } else {
+                            self.runtime_error(format!("Undefined property '{}'", name).as_str());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    } else {
+                        // format!("Undefined property '{}'", name).as_str()
+                        self.runtime_error("Attempt to access property of non-instance object");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::GetLongProperty => {
+                    let name = match self.read_long_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        },
+                        _ => unreachable!("After property accesses there should only be string constants"),
+                    };
+
+                    if let Value::Instance(instance) = self.peek_stack(0).unwrap() {
+                        // funky code below is because of the borrow checker...
+                        let value = if let Some(value) = instance.borrow().fields.get(&name) {
+                            Some(value.clone())
+                        } else {
+                            None
+                        };
+
+                        if let Some(value) = value {
+                            self.stack.pop();
+                            self.stack.push(value);
+                        } else {
+                            self.runtime_error(format!("Undefined property '{}'", name).as_str());
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    } else {
+                        self.runtime_error("Attempt to access property of non-instance object");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::SetProperty => {
+                    let name = match self.read_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        },
+                        _ => unreachable!("After property setters there should only be string constants"),
+                    };
+
+                    if let Value::Instance(instance) = self.peek_stack(1).unwrap() {
+                        let value = self.peek_stack(0).unwrap().clone();
+                        instance.borrow_mut().fields.insert(name, value);
+                    } else {
+                        self.runtime_error("Attempt to set property of non-instance object");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::SetLongProperty => {
+                    let name = match self.read_long_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        },
+                        _ => unreachable!("After property setters there should only be string constants"),
+                    };
+
+                    if let Value::Instance(instance) = self.peek_stack(1).unwrap() {
+                        let value = self.peek_stack(0).unwrap().clone();
+                        instance.borrow_mut().fields.insert(name, value);
+                    } else {
+                        self.runtime_error("Attempt to set property of non-instance object");
+                        return Err(InterpretError::RuntimeError);
+                    }
                 }
                 OpCode::Constant => {
                     let constant = self.read_constant().clone();
@@ -452,7 +570,13 @@ impl VM {
     }
 
     fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(),()> {
-        if let Value::Closure(c_obj) = callable {
+        if let Value::Class(c_obj) = callable {
+            let instance = InstanceObject::new(Rc::clone(c_obj));
+            let instance = Rc::new(RefCell::new(instance));
+            let i = self.stack.len()-arg_count as usize-1;
+            self.stack[i] = Value::Instance(instance);
+            Ok(())
+        } else if let Value::Closure(c_obj) = callable {
             self.call(Rc::clone(&c_obj), arg_count)
         } else if let Value::NativeFunction(n_f) = callable {
             let start = self.stack.len() - arg_count as usize;

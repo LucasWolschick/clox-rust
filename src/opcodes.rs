@@ -23,6 +23,14 @@ pub enum OpCode {
     SetUpvalue,
     CloseUpvalue,
 
+    Class,
+    LongClass,
+
+    GetProperty,
+    GetLongProperty,
+    SetProperty,
+    SetLongProperty,
+
     JumpIfFalse,
     Jump,
     Loop,
