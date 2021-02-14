@@ -19,7 +19,7 @@
                     "kind": "bin"
                 }
             },
-            "args": ["tests/closures-2.lox"],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
     ]
