@@ -1,0 +1,28 @@
+fun vec2(x, y) {
+    fun vec2(prop) {
+        if (prop == "x") {
+            return x;
+        } else if (prop == "y") {
+            return y;
+        }
+    }
+    
+    return vec2;
+}
+
+fun sum(v1, v2) {
+    return vec2(v1("x") + v2("x"), v1("y") + v2("y"));
+}
+
+fun printVec(name, vec) {
+    print name + ":";
+    print vec("x");
+    print vec("y");
+}
+
+var vecA = vec2(0, 2);
+var vecB = vec2(-1, 3);
+var sum = sum(vecA, vecB);
+printVec("vecA", vecA);
+printVec("vecB", vecB);
+printVec("vecA + vecB", sum);
