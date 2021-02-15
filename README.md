@@ -8,8 +8,7 @@ This was written over the course of approximately two months, after I finished a
 
 This implementation mimics Crafting Interpreters's `clox`, a single-pass one-token-lookahead compiler + virtual machine for the Lox language. It has worse performance characteristics than the reference C implementation and lacks a garbage collector, mainly because of the gymnastics that Rust requires to ensure its ownership rules and also because it offers reference counting out of the box as an alternative, through the types Rc and Weak.
 
-Some patterns in this repository draw 
-inspiration from [rulox](https://www.github.com/mariosangiorgio/rulox), which (at the time of writing) did not have a complete VM implementation.
+Some patterns in this repository draw inspiration from [rulox](https://www.github.com/mariosangiorgio/rulox), which (at the time of writing) did not have a complete VM implementation.
 
 To output debug information, run clox-rust with `CLOX_DEBUG=1` set in your environment variables.
 
@@ -35,4 +34,3 @@ Running the executable with no arguments will place you in a basic REPL session.
 If you supply the executable with a path to a Lox script, it will compile it and run it, printing any program output to stdout.
 
 If `CLOX_DEBUG=1` is set in the environment, the interpreter will log the disassembled compiled code and the instructions executed, along with the stack state at any given point.
-
