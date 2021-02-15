@@ -1,6 +1,7 @@
 class Person {
   init() {
-      
+      this.prefix = "";
+      this.name = nil;
   }
   sayName() {
     print this.prefix + this.name;
@@ -12,6 +13,7 @@ jane.name = "Jane";
 
 var bill = Person();
 bill.name = "Bill";
+bill.prefix = "Sir ";
 
 bill.sayName = jane.sayName;
 bill.sayName(); // ?

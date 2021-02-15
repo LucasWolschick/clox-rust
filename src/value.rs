@@ -1,5 +1,5 @@
-use std::rc::Rc;
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use super::chunk::Chunk;
 use super::HashTable;
@@ -14,25 +14,30 @@ pub enum Value {
     Instance(InstanceReference),
     NativeFunction(NativeFunctionPointer),
     Closure(ClosureReference),
+    BoundMethod(BoundMethodReference),
     Nil,
 }
 
 pub type StringReference = Rc<String>;
 pub type FunctionReference = Rc<FunctionObject>;
 pub type ClosureReference = Rc<ClosureObject>;
-pub type ClassReference = Rc<ClassObject>;
+pub type ClassReference = Rc<RefCell<ClassObject>>;
 pub type UpvalueReference = Rc<RefCell<Upvalue>>;
 pub type InstanceReference = Rc<RefCell<InstanceObject>>;
+pub type BoundMethodReference = Rc<BoundMethod>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Upvalue {
-    Open {slot: usize},
-    Closed {value: Value},
+    Open { slot: usize },
+    Closed { value: Value },
 }
 
 // ugly hack because of https://github.com/rust-lang/rust/issues/54508
 #[derive(Clone)]
-pub struct NativeFunctionPointer(pub fn(u8, &[Value]) -> Result<Value, String>, pub &'static str);
+pub struct NativeFunctionPointer(
+    pub fn(u8, &[Value]) -> Result<Value, String>,
+    pub &'static str,
+);
 impl PartialEq for NativeFunctionPointer {
     fn eq(&self, other: &Self) -> bool {
         self.0 as usize == other.0 as usize && self.1 == other.1
@@ -77,14 +82,21 @@ impl std::fmt::Display for Value {
             Value::String(s) => f.write_str(s.as_str()),
             Value::Function(fun) => match &fun.name {
                 Some(s) => f.write_fmt(format_args!("<fn {}>", s)),
-                None => f.write_str("<script>")
-            }
-            Value::Class(c) => f.write_fmt(format_args!("<class {}>", c.name())),
-            Value::Instance(i) => f.write_fmt(format_args!("<instance {}>", i.borrow().class.name())),
+                None => f.write_str("<script>"),
+            },
+            Value::Class(c) => f.write_fmt(format_args!("<class {}>", c.borrow().name())),
+            Value::Instance(i) => f.write_fmt(format_args!(
+                "<instance {}>",
+                i.borrow().class.borrow().name()
+            )),
+            Value::BoundMethod(b) => match b.method.function.name() {
+                Some(s) => f.write_fmt(format_args!("<method {}>", s)),
+                None => panic!("Attempt to print method bound on script"),
+            },
             Value::Closure(closure) => match &closure.function.name {
                 Some(s) => f.write_fmt(format_args!("<fn {}>", s)),
-                None => f.write_str("<script>")
-            }
+                None => f.write_str("<script>"),
+            },
             Value::Nil => f.write_str("nil"),
         }
     }
@@ -133,18 +145,26 @@ pub struct ClosureObject {
 impl ClosureObject {
     pub fn new(function: FunctionReference) -> Self {
         let upvalues = function.upvalues as usize;
-        Self { function, upvalues: Vec::with_capacity(upvalues), n_upvalues: upvalues }
+        Self {
+            function,
+            upvalues: Vec::with_capacity(upvalues),
+            n_upvalues: upvalues,
+        }
     }
 }
 
 #[derive(Clone, PartialEq)]
 pub struct ClassObject {
-    name: StringReference,
+    pub name: StringReference,
+    pub methods: HashTable<StringReference, Value>,
 }
 
 impl ClassObject {
     pub fn new(name: StringReference) -> Self {
-        Self { name }
+        Self {
+            name,
+            methods: HashTable::default(),
+        }
     }
 
     pub fn name(&self) -> &StringReference {
@@ -164,5 +184,17 @@ impl InstanceObject {
             class,
             fields: HashTable::default(),
         }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct BoundMethod {
+    pub receiver: Value,
+    pub method: ClosureReference,
+}
+
+impl BoundMethod {
+    pub fn new(receiver: Value, method: ClosureReference) -> Self {
+        Self { receiver, method }
     }
 }

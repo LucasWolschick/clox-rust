@@ -25,11 +25,16 @@ pub enum OpCode {
 
     Class,
     LongClass,
+    Method,
+    LongMethod,
 
     GetProperty,
     GetLongProperty,
     SetProperty,
     SetLongProperty,
+
+    Invoke,
+    LongInvoke,
 
     JumpIfFalse,
     Jump,

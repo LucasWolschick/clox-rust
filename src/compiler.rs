@@ -1,16 +1,16 @@
 use std::rc::Rc;
 
 use super::chunk::{Chunk, Constant};
-use super::value::{FunctionObject, StringReference};
 use super::opcodes::OpCode;
 use super::scanner::{Scanner, Token, TokenType};
+use super::value::{FunctionObject, StringReference};
 use super::InterpretError;
 
 #[derive(Debug)]
 struct Local {
     name: String,
     depth: isize,
-    captured: bool
+    captured: bool,
 }
 
 #[derive(Debug)]
@@ -58,7 +58,11 @@ impl Resolver {
             return Err(());
         }
 
-        let local = Local { name, depth: -1, captured: false };
+        let local = Local {
+            name,
+            depth: -1,
+            captured: false,
+        };
         self.locals.push(local);
         Ok(())
     }
@@ -95,22 +99,37 @@ struct Upvalue {
     index: isize,
 }
 
+enum CompilerWhere {
+    Script,
+    Function(StringReference),
+    Method,
+    Initializer,
+}
+
 struct CompilerState {
     function: FunctionObject,
     upvalues: Vec<Upvalue>,
     resolver: Resolver,
+    place: CompilerWhere,
 }
 
 impl CompilerState {
-    fn new(name: Option<StringReference>, _index: usize) -> Self {
+    fn new(place: CompilerWhere) -> Self {
         let mut resolver = Resolver::new();
         let mut function = FunctionObject::new();
-        
-        if let Some(name) = name {
-            resolver.add_local((*name).clone()).unwrap();
-            function.set_name(name);
-        } else {
-            resolver.add_local(String::new()).unwrap();
+
+        match place {
+            CompilerWhere::Script => {
+                resolver.add_local(String::new()).unwrap();
+            }
+            CompilerWhere::Function(ref name) => {
+                let name = name.clone();
+                resolver.add_local((*name).clone()).unwrap();
+                function.set_name(name);
+            }
+            CompilerWhere::Method | CompilerWhere::Initializer => {
+                resolver.add_local(String::from("this")).unwrap();
+            }
         }
 
         let zeroth_local = resolver.local_mut(resolver.n_locals() - 1);
@@ -121,8 +140,13 @@ impl CompilerState {
             function,
             resolver,
             upvalues: Vec::new(),
+            place,
         }
     }
+}
+
+struct ClassCompilerState {
+    name: Token,
 }
 
 struct Compiler {
@@ -132,8 +156,9 @@ struct Compiler {
     failed: bool,
     panic_mode: bool,
     debug: bool,
-    
+
     state: Vec<CompilerState>,
+    class_stack: Vec<ClassCompilerState>,
 }
 
 impl Compiler {
@@ -142,7 +167,8 @@ impl Compiler {
         resolver.add_local(String::new()).unwrap();
 
         Compiler {
-            state: vec![CompilerState::new(None, 0)],
+            state: vec![CompilerState::new(CompilerWhere::Script)],
+            class_stack: Vec::new(),
 
             scanner: Scanner::new(src),
 
@@ -250,7 +276,12 @@ impl Compiler {
     }
 
     fn emit_return(&mut self) {
-        self.emit_opcode(OpCode::Nil);
+        if matches!(self.state.last().unwrap().place, CompilerWhere::Initializer) {
+            self.emit_opcode(OpCode::GetLocal);
+            self.emit_byte(0);
+        } else {
+            self.emit_opcode(OpCode::Nil);
+        }
         self.emit_opcode(OpCode::Return);
     }
 
@@ -293,7 +324,8 @@ impl Compiler {
 
     fn class_declaration(&mut self) {
         self.consume(TokenType::Identifier, "Expected class name");
-        let name_constant = self.identifier_constant(&self.previous.clone());
+        let name = self.previous.clone();
+        let name_constant = self.identifier_constant(&name);
         self.declare_variable();
 
         if name_constant > u8::MAX as usize {
@@ -303,17 +335,30 @@ impl Compiler {
             self.emit_opcode(OpCode::Class);
             self.emit_byte(name_constant as u8);
         }
-        
+
         self.define_variable(name_constant);
+        let class_state = ClassCompilerState {
+            name: self.previous.clone(),
+        };
+        self.class_stack.push(class_state);
+        self.named_variable(&name, false);
 
         self.consume(TokenType::LeftBrace, "Expected '{' before class body");
+
+        while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
+            self.method();
+        }
+
         self.consume(TokenType::RightBrace, "Expected '}' after class body");
+        self.emit_opcode(OpCode::Pop);
+        self.class_stack.pop();
     }
 
     fn fun_declaration(&mut self) {
         let global = self.parse_variable("Expected function name");
         self.state.last_mut().unwrap().resolver.mark_initialized();
-        self.function();
+        let name = Rc::new(self.previous.lexeme.clone());
+        self.function(CompilerWhere::Function(name));
         self.define_variable(global);
     }
 
@@ -365,9 +410,14 @@ impl Compiler {
             }
         }
 
-        self.state.last_mut().unwrap().resolver.add_local(name).unwrap_or_else(|_| {
-            self.error("Too many local variables in function");
-        });
+        self.state
+            .last_mut()
+            .unwrap()
+            .resolver
+            .add_local(name)
+            .unwrap_or_else(|_| {
+                self.error("Too many local variables in function");
+            });
     }
 
     fn identifier_constant(&mut self, token: &Token) -> usize {
@@ -433,9 +483,8 @@ impl Compiler {
         self.consume(TokenType::RightBrace, "Expected '}' after block");
     }
 
-    fn function(&mut self) {
-        let name = Rc::new(self.previous.lexeme.clone());
-        self.state.push(CompilerState::new(Some(name), self.state.len()));
+    fn function(&mut self, place: CompilerWhere) {
+        self.state.push(CompilerState::new(place));
         self.begin_scope();
 
         // parameter list
@@ -469,7 +518,10 @@ impl Compiler {
         let new_state = self.state.pop().unwrap();
         let function = new_state.function;
         if self.debug && !self.failed {
-            super::debug::disassemble(function.chunk(), function.name().map_or("script", |x| x.as_str()));
+            super::debug::disassemble(
+                function.chunk(),
+                function.name().map_or("script", |x| x.as_str()),
+            );
         }
 
         let func_upvalues = function.upvalues;
@@ -483,6 +535,25 @@ impl Compiler {
 
             self.emit_byte(is_local);
             self.emit_byte(index);
+        }
+    }
+
+    fn method(&mut self) {
+        self.consume(TokenType::Identifier, "Expected method name");
+        let constant = self.identifier_constant(&self.previous.clone());
+
+        if &self.previous.lexeme == "init" {
+            self.function(CompilerWhere::Initializer);
+        } else {
+            self.function(CompilerWhere::Method);
+        }
+
+        if constant > u8::MAX as usize {
+            self.emit_opcode(OpCode::LongMethod);
+            self.emit_usize(constant);
+        } else {
+            self.emit_opcode(OpCode::Method);
+            self.emit_byte(constant as u8);
         }
     }
 
@@ -523,6 +594,9 @@ impl Compiler {
         if self.match_advance(TokenType::Semicolon) {
             self.emit_return();
         } else {
+            if matches!(self.state.last().unwrap().place, CompilerWhere::Initializer) {
+                self.error("Attempt to return value from initializer");
+            }
             self.expression();
             self.consume(TokenType::Semicolon, "Expected ';' after return value");
             self.emit_opcode(OpCode::Return);
@@ -721,15 +795,46 @@ impl Compiler {
     fn dot(&mut self, can_assign: bool) {
         self.consume(TokenType::Identifier, "Expected property name after '.'");
         let name = self.identifier_constant(&self.previous.clone());
+        let is_long = name > u8::MAX as usize;
 
         if can_assign && self.match_advance(TokenType::Equal) {
             self.expression();
-            self.emit_opcode(OpCode::SetProperty);
-            self.emit_byte(name as u8);
+            if is_long {
+                self.emit_opcode(OpCode::SetLongProperty);
+                self.emit_usize(name);
+            } else {
+                self.emit_opcode(OpCode::SetProperty);
+                self.emit_byte(name as u8);
+            }
+        } else if self.match_advance(TokenType::LeftParen) {
+            // immediate method call
+            let arg_count = self.argument_list();
+            if is_long {
+                self.emit_opcode(OpCode::LongInvoke);
+                self.emit_usize(name);
+            } else {
+                self.emit_opcode(OpCode::Invoke);
+                self.emit_byte(name as u8);
+            }
+            self.emit_byte(arg_count);
         } else {
-            self.emit_opcode(OpCode::GetProperty);
-            self.emit_byte(name as u8);
+            // we do property accesses
+            if is_long {
+                self.emit_opcode(OpCode::GetLongProperty);
+                self.emit_usize(name);
+            } else {
+                self.emit_opcode(OpCode::GetProperty);
+                self.emit_byte(name as u8);
+            }
         }
+    }
+
+    fn this(&mut self, _: bool) {
+        if self.class_stack.is_empty() {
+            self.error("Attempt to use 'this' outside of a class");
+            return;
+        }
+        self.variable(false);
     }
 
     fn resolve_upvalue(&mut self, name: &str, depth: usize) -> Option<isize> {
@@ -737,7 +842,7 @@ impl Compiler {
             // root level. we're looking at a global
             return None;
         }
-        
+
         if let (Some(arg), bool) = self.state[depth - 1].resolver.resolve_local(name) {
             // we got an upvalue
             if !bool {
@@ -751,15 +856,18 @@ impl Compiler {
             // look in other scopes
             return Some(self.add_upvalue(depth, arg, false));
         }
-        
+
         None
     }
 
     fn add_upvalue(&mut self, depth: usize, index: isize, is_local: bool) -> isize {
         let state = &self.state[depth];
-        if let Some((i, _)) = state.upvalues.iter().enumerate().find(|(_, u)| {
-            u.index == index && u.is_local == is_local
-        }) {
+        if let Some((i, _)) = state
+            .upvalues
+            .iter()
+            .enumerate()
+            .find(|(_, u)| u.index == index && u.is_local == is_local)
+        {
             return i as isize;
         }
 
@@ -768,34 +876,36 @@ impl Compiler {
             return 0;
         }
 
-        self.state[depth].upvalues.push(Upvalue {
-            is_local,
-            index,
-        });
+        self.state[depth].upvalues.push(Upvalue { is_local, index });
         self.state[depth].function.upvalues += 1;
         self.state[depth].upvalues.len() as isize - 1
     }
 
     fn named_variable(&mut self, name: &Token, can_assign: bool) {
-        let (arg, get_op, set_op, long) =
-            if let (Some(arg), initialized) = self.state.last().unwrap().resolver.resolve_local(&name.lexeme) {
-                // we're dealing with locals.
-                if !initialized {
-                    self.error("Can't read local variable in own initializer");
-                }
-                (arg as usize, OpCode::GetLocal, OpCode::SetLocal, false)
-            } else if let Some(arg) = self.resolve_upvalue(&name.lexeme, self.state.len()-1) {
-                // we're dealing with up values
-                (arg as usize, OpCode::GetUpvalue, OpCode::SetUpvalue, false)
+        let (arg, get_op, set_op, long) = if let (Some(arg), initialized) = self
+            .state
+            .last()
+            .unwrap()
+            .resolver
+            .resolve_local(&name.lexeme)
+        {
+            // we're dealing with locals.
+            if !initialized {
+                self.error("Can't read local variable in own initializer");
+            }
+            (arg as usize, OpCode::GetLocal, OpCode::SetLocal, false)
+        } else if let Some(arg) = self.resolve_upvalue(&name.lexeme, self.state.len() - 1) {
+            // we're dealing with up values
+            (arg as usize, OpCode::GetUpvalue, OpCode::SetUpvalue, false)
+        } else {
+            // we're dealing with globals.
+            let arg = self.identifier_constant(name) as usize;
+            if arg > u8::MAX as usize {
+                (arg, OpCode::GetLongGlobal, OpCode::SetLongGlobal, true)
             } else {
-                // we're dealing with globals.
-                let arg = self.identifier_constant(name) as usize;
-                if arg > u8::MAX as usize {
-                    (arg, OpCode::GetLongGlobal, OpCode::SetLongGlobal, true)
-                } else {
-                    (arg, OpCode::GetGlobal, OpCode::SetGlobal, false)
-                }
-            };
+                (arg, OpCode::GetGlobal, OpCode::SetGlobal, false)
+            }
+        };
 
         if can_assign && self.match_advance(TokenType::Equal) {
             self.expression();
@@ -844,7 +954,9 @@ impl Compiler {
     fn get_rule(token_type: TokenType) -> ParseRule {
         match token_type {
             // ParseRule(prefix, infix, precedence)
-            TokenType::LeftParen => ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call),
+            TokenType::LeftParen => {
+                ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call)
+            }
             TokenType::Minus => ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term),
             TokenType::Plus => ParseRule(None, Some(Self::binary), Precedence::Term),
             TokenType::Slash => ParseRule(None, Some(Self::binary), Precedence::Factor),
@@ -865,6 +977,7 @@ impl Compiler {
             TokenType::And => ParseRule(None, Some(Self::and), Precedence::And),
             TokenType::Or => ParseRule(None, Some(Self::or), Precedence::Or),
             TokenType::Dot => ParseRule(None, Some(Self::dot), Precedence::Call),
+            TokenType::This => ParseRule(Some(Self::this), None, Precedence::None),
             _ => ParseRule(None, None, Precedence::None),
         }
     }

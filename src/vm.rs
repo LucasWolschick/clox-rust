@@ -1,16 +1,17 @@
-use std::rc::Rc;
 use std::cell::RefCell;
-use std::time::{SystemTime, Duration};
+use std::rc::Rc;
+use std::time::{Duration, SystemTime};
 
-//todo: fix issue with OOB indexing @ vm.rs:213:37
-//todo: Closed Upvalues section
-
-use super::{HashSet, HashTable};
+use crate::value::BoundMethod;
 
 use super::chunk::{Chunk, Constant};
 use super::debug;
 use super::opcodes::OpCode;
-use super::value::{StringReference, Value, FunctionObject, NativeFunctionPointer, ClosureObject, ClosureReference, Upvalue, UpvalueReference, ClassObject, ClassReference, InstanceObject, InstanceReference};
+use super::value::{
+    ClassObject, ClassReference, ClosureObject, ClosureReference, FunctionObject, InstanceObject,
+    NativeFunctionPointer, StringReference, Upvalue, UpvalueReference, Value,
+};
+use super::{HashSet, HashTable};
 use super::{InterpretError, InterpretResult};
 
 struct CallFrame {
@@ -26,6 +27,8 @@ pub struct VM {
     globals: HashTable<StringReference, Value>,
     frames: Vec<CallFrame>,
     open_upvalues: Vec<UpvalueReference>,
+    /// Note: will always be Some(string) because of construction semantics
+    init_string: Option<StringReference>,
 }
 
 impl VM {
@@ -39,16 +42,13 @@ impl VM {
             globals: HashTable::default(),
             frames,
             open_upvalues: Vec::new(),
+            init_string: None,
         };
 
-        vm.define_native("clock", NativeFunctionPointer (
-            native_clock,
-            "clock",
-        ));
-        vm.define_native("wait", NativeFunctionPointer (
-            native_wait,
-            "wait",
-        ));
+        vm.init_string = Some(vm.allocate_string(String::from("init")));
+
+        vm.define_native("clock", NativeFunctionPointer(native_clock, "clock"));
+        vm.define_native("wait", NativeFunctionPointer(native_wait, "wait"));
         vm
     }
 
@@ -171,7 +171,7 @@ impl VM {
                     if let Constant::Function(f) = function {
                         let function = Rc::new(f.clone());
                         let mut closure = ClosureObject::new(function);
-                        
+
                         for _ in 0..closure.n_upvalues {
                             let is_local = self.read_byte() == 1;
                             let index = self.read_byte() as usize;
@@ -180,14 +180,16 @@ impl VM {
                                 let upvalue = self.capture_upvalue(slot_offset + index);
                                 closure.upvalues.push(upvalue);
                             } else {
-                                let upvalue = self.frames.last().unwrap().closure.upvalues[index as usize].clone();
+                                let upvalue = self.frames.last().unwrap().closure.upvalues
+                                    [index as usize]
+                                    .clone();
                                 closure.upvalues.push(upvalue);
                             }
                         }
                         self.stack.push(Value::Closure(Rc::new(closure)));
                     } else {
                         self.runtime_error("Attempt to make closure out of non-function constant");
-                        return Err(InterpretError::RuntimeError)
+                        return Err(InterpretError::RuntimeError);
                     }
                 }
                 OpCode::LongClosure => {
@@ -195,7 +197,7 @@ impl VM {
                     if let Constant::Function(f) = function {
                         let function = Rc::new(f.clone());
                         let mut closure = ClosureObject::new(function);
-                        
+
                         for _ in 0..closure.n_upvalues {
                             let is_local = self.read_byte() == 1;
                             let index = self.read_byte() as usize;
@@ -204,40 +206,89 @@ impl VM {
                                 let upvalue = self.capture_upvalue(slot_offset + index);
                                 closure.upvalues.push(upvalue);
                             } else {
-                                let upvalue = self.frames.last().unwrap().closure.upvalues[index as usize].clone();
+                                let upvalue = self.frames.last().unwrap().closure.upvalues
+                                    [index as usize]
+                                    .clone();
                                 closure.upvalues.push(upvalue);
                             }
                         }
                         self.stack.push(Value::Closure(Rc::new(closure)));
                     } else {
                         self.runtime_error("Attempt to make closure out of non-function constant");
-                        return Err(InterpretError::RuntimeError)
+                        return Err(InterpretError::RuntimeError);
                     }
                 }
                 OpCode::GetUpvalue => {
                     let upvalue_i = self.read_byte() as usize;
                     let upvalue = &self.frames.last().unwrap().closure.upvalues[upvalue_i];
-                    match &*upvalue.borrow() { // this shouldn't work???????
-                        Upvalue::Open {slot: index} => self.stack.push(self.stack[*index].clone()),
-                        Upvalue::Closed {value: val} => self.stack.push(val.clone()),
+                    match &*upvalue.borrow() {
+                        // this shouldn't work???????
+                        Upvalue::Open { slot: index } => {
+                            self.stack.push(self.stack[*index].clone())
+                        }
+                        Upvalue::Closed { value: val } => self.stack.push(val.clone()),
                     };
                 }
                 OpCode::SetUpvalue => {
                     let slot = self.read_byte() as usize;
                     let stack_value = self.stack.last().unwrap().clone();
                     let upvalue = &self.frames.last_mut().unwrap().closure.upvalues[slot];
-                    match *upvalue.borrow_mut() {
-                        Upvalue::Open {slot: index} => self.stack[index] = stack_value,
-                        Upvalue::Closed {value: ref mut val} => {
+                    match *RefCell::borrow_mut(upvalue) {
+                        Upvalue::Open { slot: index } => self.stack[index] = stack_value,
+                        Upvalue::Closed { value: ref mut val } => {
                             *val = stack_value;
                         }
                     }
                     // TODO: this might not work because .clone() might duplicate the upvalue and render it useless!
                 }
                 OpCode::CloseUpvalue => {
-                    let idx = self.stack.len()-1;
+                    let idx = self.stack.len() - 1;
                     self.close_upvalues(idx);
                     self.stack.pop();
+                }
+                OpCode::Invoke => {
+                    let name = self.read_constant();
+                    if let Constant::String(string) = name {
+                        let r = string.clone();
+                        let rc = self.allocate_string(r);
+                        let args = self.read_byte();
+                        self.invoke(rc, args)?;
+                    } else {
+                        unreachable!("We don't expect non-string constants after Invoke opcodes");
+                    }
+                }
+                OpCode::LongInvoke => {
+                    let name = self.read_long_constant();
+                    if let Constant::String(string) = name {
+                        let r = string.clone();
+                        let rc = self.allocate_string(r);
+                        let args = self.read_byte();
+                        self.invoke(rc, args)?;
+                    } else {
+                        unreachable!("We don't expect non-string constants after Invoke opcodes");
+                    }
+                }
+                OpCode::Method => {
+                    let name = self.read_constant();
+                    if let Constant::String(s) = name {
+                        let s = s.clone();
+                        let rc = self.allocate_string(s);
+                        self.define_method(rc)?;
+                    } else {
+                        self.runtime_error("Attempt to declare method with non-string constant");
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::LongMethod => {
+                    let name = self.read_long_constant();
+                    if let Constant::String(s) = name {
+                        let s = s.clone();
+                        let rc = self.allocate_string(s);
+                        self.define_method(rc)?;
+                    } else {
+                        self.runtime_error("Attempt to declare method with non-string constant");
+                        return Err(InterpretError::RuntimeError);
+                    }
                 }
                 OpCode::SetGlobal => {
                     let name = self.read_constant();
@@ -288,11 +339,13 @@ impl VM {
                         Constant::String(s) => {
                             let s = s.clone();
                             self.allocate_string(s)
-                        },
-                        _ => unreachable!("After class declarations there should only be string constants"),
+                        }
+                        _ => unreachable!(
+                            "After class declarations there should only be string constants"
+                        ),
                     };
                     let class = ClassObject::new(string);
-                    let rc = Rc::new(class);
+                    let rc = Rc::new(RefCell::new(class));
                     self.stack.push(Value::Class(rc));
                 }
                 OpCode::LongClass => {
@@ -300,11 +353,13 @@ impl VM {
                         Constant::String(s) => {
                             let s = s.clone();
                             self.allocate_string(s)
-                        },
-                        _ => unreachable!("After class declarations there should only be string constants"),
+                        }
+                        _ => unreachable!(
+                            "After class declarations there should only be string constants"
+                        ),
                     };
                     let class = ClassObject::new(string);
-                    let rc = Rc::new(class);
+                    let rc = Rc::new(RefCell::new(class));
                     self.stack.push(Value::Class(rc));
                 }
                 OpCode::GetProperty => {
@@ -312,28 +367,30 @@ impl VM {
                         Constant::String(s) => {
                             let s = s.clone();
                             self.allocate_string(s)
-                        },
-                        _ => unreachable!("After property accesses there should only be string constants"),
+                        }
+                        _ => unreachable!(
+                            "After property accesses there should only be string constants"
+                        ),
                     };
 
-                    if let Value::Instance(instance) = self.peek_stack(0).unwrap() {
-                        // funky code below is because of the borrow checker...
-                        let value = if let Some(value) = instance.borrow().fields.get(&name) {
-                            Some(value.clone())
-                        } else {
-                            None
-                        };
-
-                        if let Some(value) = value {
-                            self.stack.pop();
-                            self.stack.push(value);
-                        } else {
-                            self.runtime_error(format!("Undefined property '{}'", name).as_str());
-                            return Err(InterpretError::RuntimeError);
-                        }
+                    let instance = if let Value::Instance(instance) = self.peek_stack(0).unwrap() {
+                        Rc::clone(instance)
                     } else {
-                        // format!("Undefined property '{}'", name).as_str()
                         self.runtime_error("Attempt to access property of non-instance object");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let value = if let Some(value) = instance.borrow().fields.get(&name) {
+                        Some(value.clone())
+                    } else {
+                        None
+                    };
+
+                    if let Some(value) = value {
+                        self.stack.pop();
+                        self.stack.push(value);
+                    } else if !self.bind_method(Rc::clone(&instance.borrow().class), &name) {
+                        self.runtime_error(format!("Undefined property '{}'", name).as_str());
                         return Err(InterpretError::RuntimeError);
                     }
                 }
@@ -342,27 +399,30 @@ impl VM {
                         Constant::String(s) => {
                             let s = s.clone();
                             self.allocate_string(s)
-                        },
-                        _ => unreachable!("After property accesses there should only be string constants"),
+                        }
+                        _ => unreachable!(
+                            "After property accesses there should only be string constants"
+                        ),
                     };
 
-                    if let Value::Instance(instance) = self.peek_stack(0).unwrap() {
-                        // funky code below is because of the borrow checker...
-                        let value = if let Some(value) = instance.borrow().fields.get(&name) {
-                            Some(value.clone())
-                        } else {
-                            None
-                        };
-
-                        if let Some(value) = value {
-                            self.stack.pop();
-                            self.stack.push(value);
-                        } else {
-                            self.runtime_error(format!("Undefined property '{}'", name).as_str());
-                            return Err(InterpretError::RuntimeError);
-                        }
+                    let instance = if let Value::Instance(instance) = self.peek_stack(0).unwrap() {
+                        Rc::clone(instance)
                     } else {
                         self.runtime_error("Attempt to access property of non-instance object");
+                        return Err(InterpretError::RuntimeError);
+                    };
+
+                    let value = if let Some(value) = instance.borrow().fields.get(&name) {
+                        Some(value.clone())
+                    } else {
+                        None
+                    };
+
+                    if let Some(value) = value {
+                        self.stack.pop();
+                        self.stack.push(value);
+                    } else if !self.bind_method(Rc::clone(&instance.borrow().class), &name) {
+                        self.runtime_error(format!("Undefined property '{}'", name).as_str());
                         return Err(InterpretError::RuntimeError);
                     }
                 }
@@ -371,13 +431,15 @@ impl VM {
                         Constant::String(s) => {
                             let s = s.clone();
                             self.allocate_string(s)
-                        },
-                        _ => unreachable!("After property setters there should only be string constants"),
+                        }
+                        _ => unreachable!(
+                            "After property setters there should only be string constants"
+                        ),
                     };
 
                     if let Value::Instance(instance) = self.peek_stack(1).unwrap() {
                         let value = self.peek_stack(0).unwrap().clone();
-                        instance.borrow_mut().fields.insert(name, value);
+                        RefCell::borrow_mut(&instance).fields.insert(name, value);
                     } else {
                         self.runtime_error("Attempt to set property of non-instance object");
                         return Err(InterpretError::RuntimeError);
@@ -388,13 +450,15 @@ impl VM {
                         Constant::String(s) => {
                             let s = s.clone();
                             self.allocate_string(s)
-                        },
-                        _ => unreachable!("After property setters there should only be string constants"),
+                        }
+                        _ => unreachable!(
+                            "After property setters there should only be string constants"
+                        ),
                     };
 
                     if let Value::Instance(instance) = self.peek_stack(1).unwrap() {
                         let value = self.peek_stack(0).unwrap().clone();
-                        instance.borrow_mut().fields.insert(name, value);
+                        RefCell::borrow_mut(&instance).fields.insert(name, value);
                     } else {
                         self.runtime_error("Attempt to set property of non-instance object");
                         return Err(InterpretError::RuntimeError);
@@ -540,7 +604,7 @@ impl VM {
                     } else {
                         break;
                     }
-                },
+                }
                 _ => (),
             }
         }
@@ -557,50 +621,150 @@ impl VM {
             if i < 1 {
                 break;
             }
-            let upvalue = &self.open_upvalues[(i-1) as usize];
-            let location = match *upvalue.borrow() {Upvalue::Open {slot} => slot, _ => unreachable!("Closed upvalues shouldn't be on the open upvalues list")};
+            let upvalue = &self.open_upvalues[(i - 1) as usize];
+            let location = match *upvalue.borrow() {
+                Upvalue::Open { slot } => slot,
+                _ => unreachable!("Closed upvalues shouldn't be on the open upvalues list"),
+            };
             if location < last {
                 break;
             }
-            upvalue.replace_with(|_| Upvalue::Closed {value: self.stack[location].clone()});
+            upvalue.replace_with(|_| Upvalue::Closed {
+                value: self.stack[location].clone(),
+            });
             i -= 1;
         }
 
         self.open_upvalues.truncate(i as usize);
     }
 
-    fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(),()> {
-        if let Value::Class(c_obj) = callable {
-            let instance = InstanceObject::new(Rc::clone(c_obj));
-            let instance = Rc::new(RefCell::new(instance));
-            let i = self.stack.len()-arg_count as usize-1;
-            self.stack[i] = Value::Instance(instance);
+    fn define_method(&mut self, name: StringReference) -> Result<(), InterpretError> {
+        let method = self.stack.pop().unwrap();
+        let class = self.peek_stack(0).unwrap();
+        if let Value::Class(class) = class {
+            RefCell::borrow_mut(class).methods.insert(name, method);
             Ok(())
-        } else if let Value::Closure(c_obj) = callable {
-            self.call(Rc::clone(&c_obj), arg_count)
-        } else if let Value::NativeFunction(n_f) = callable {
-            let start = self.stack.len() - arg_count as usize;
-            let r = n_f.0(arg_count, &mut self.stack[start..]);
-            self.stack.pop();
-            match r {
-                Ok(r) => {
-                    self.stack.push(r);
-                    Ok(())
-                },
-                Err(s) => {
-                    self.runtime_error(&s);
-                    Err(())
-                },
-            }
         } else {
-            self.runtime_error("Only functions and classes are callable");
-            Err(())
+            self.runtime_error("Attempt to define method on non-class object");
+            Err(InterpretError::RuntimeError)
         }
     }
 
-    fn call(&mut self, closure: ClosureReference, arg_count: u8) -> Result<(),()> {
+    fn bind_method(&mut self, class: ClassReference, name: &StringReference) -> bool {
+        if let Some(Value::Closure(c)) = class.borrow().methods.get(name) {
+            let bound = BoundMethod::new(self.peek_stack(0).unwrap().clone(), c.clone());
+            let bound = Rc::new(bound);
+            self.stack.pop();
+            self.stack.push(Value::BoundMethod(bound));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn invoke(&mut self, name: StringReference, arg_count: u8) -> Result<(), InterpretError> {
+        let receiver = self.peek_stack(arg_count as usize).unwrap().clone();
+        let i = if let Value::Instance(i) = receiver {
+            i
+        } else {
+            self.runtime_error("Attempt to call method of non-instance object");
+            return Err(InterpretError::RuntimeError);
+        };
+
+        let i = i.borrow();
+        if let Some(value) = i.fields.get(&name) {
+            let value = value.clone();
+            let index = self.stack.len() - arg_count as usize - 1;
+            self.stack[index] = value.clone();
+            self.call_value(&value, arg_count)
+                .map_err(|_| InterpretError::RuntimeError)
+        } else {
+            let class = Rc::clone(&i.class);
+            self.invoke_from_class(class, name, arg_count)
+        }
+    }
+
+    fn invoke_from_class(
+        &mut self,
+        class: ClassReference,
+        name: StringReference,
+        arg_count: u8,
+    ) -> Result<(), InterpretError> {
+        if let Some(Value::Closure(c)) = class.borrow().methods.get(&name) {
+            self.call(Rc::clone(c), arg_count)
+                .map_err(|_| InterpretError::RuntimeError)
+        } else {
+            self.runtime_error(format!("Undefined property '{}'", name).as_str());
+            Err(InterpretError::RuntimeError)
+        }
+    }
+
+    fn call_value(&mut self, callable: &Value, arg_count: u8) -> Result<(), ()> {
+        match callable {
+            Value::BoundMethod(m_obj) => {
+                let i = self.stack.len() - arg_count as usize - 1;
+                self.stack[i] = m_obj.receiver.clone();
+                self.call(Rc::clone(&m_obj.method), arg_count)
+            }
+            Value::Class(c_obj) => {
+                let instance = InstanceObject::new(Rc::clone(c_obj));
+                let instance = Rc::new(RefCell::new(instance));
+                let i = self.stack.len() - arg_count as usize - 1;
+                self.stack[i] = Value::Instance(instance);
+
+                if let Some(closure) = c_obj
+                    .borrow()
+                    .methods
+                    .get(self.init_string.as_ref().unwrap())
+                {
+                    let closure = match closure {
+                        Value::Closure(c) => Rc::clone(c),
+                        _ => unreachable!(
+                            "There should be no non-closure objects in the methods table"
+                        ),
+                    };
+                    self.call(closure, arg_count)
+                } else if arg_count != 0 {
+                    self.runtime_error(
+                        format!("Expected 0 arguments but got {}", arg_count).as_ref(),
+                    );
+                    Err(())
+                } else {
+                    Ok(())
+                }
+            }
+            Value::Closure(c_obj) => self.call(Rc::clone(&c_obj), arg_count),
+            Value::NativeFunction(n_f) => {
+                let start = self.stack.len() - arg_count as usize;
+                let r = n_f.0(arg_count, &mut self.stack[start..]);
+                self.stack.pop();
+                match r {
+                    Ok(r) => {
+                        self.stack.push(r);
+                        Ok(())
+                    }
+                    Err(s) => {
+                        self.runtime_error(&s);
+                        Err(())
+                    }
+                }
+            }
+            _ => {
+                self.runtime_error("Only functions, methods and classes are callable");
+                Err(())
+            }
+        }
+    }
+
+    fn call(&mut self, closure: ClosureReference, arg_count: u8) -> Result<(), ()> {
         if closure.function.arity != arg_count {
-            self.runtime_error(format!("Expected {} arguments but got {}", closure.function.arity, arg_count).as_str());
+            self.runtime_error(
+                format!(
+                    "Expected {} arguments but got {}",
+                    closure.function.arity, arg_count
+                )
+                .as_str(),
+            );
             return Err(());
         }
 
@@ -608,7 +772,7 @@ impl VM {
             self.runtime_error("Stack overflow");
             return Err(());
         }
-        
+
         let frame = CallFrame {
             closure,
             ip: 0,
@@ -627,7 +791,8 @@ impl VM {
     fn read_short(&mut self) -> u16 {
         let frame = self.frames.last_mut().unwrap();
         frame.ip += 2;
-        (*frame.closure.function.chunk().at(frame.ip - 2) as u16) << 8 | *frame.closure.function.chunk().at(frame.ip - 1) as u16
+        (*frame.closure.function.chunk().at(frame.ip - 2) as u16) << 8
+            | *frame.closure.function.chunk().at(frame.ip - 1) as u16
     }
 
     fn allocate_string(&mut self, string: String) -> StringReference {
@@ -680,7 +845,11 @@ impl VM {
             eprintln!(
                 "[line {}] in {}",
                 frame.closure.function.chunk().line_at_offset(instruction),
-                if let Some(n) = frame.closure.function.name() { n.as_str() } else { "script" }
+                if let Some(n) = frame.closure.function.name() {
+                    n.as_str()
+                } else {
+                    "script"
+                }
             );
         }
         eprintln!("Stack end");
@@ -698,7 +867,10 @@ fn native_clock(arg_count: u8, _: &[Value]) -> Result<Value, String> {
         return Err(format!("Expected 0 arguments but got {}", arg_count));
     }
 
-    let t: f64 = SystemTime::UNIX_EPOCH.elapsed().unwrap_or_else(|_| Duration::default()).as_secs_f64();
+    let t: f64 = SystemTime::UNIX_EPOCH
+        .elapsed()
+        .unwrap_or_else(|_| Duration::default())
+        .as_secs_f64();
     Ok(Value::Number(t))
 }
 

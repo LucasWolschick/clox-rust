@@ -1,0 +1,20 @@
+class Test {
+    doSomething() {}
+}
+
+fun doBatch(klass) {
+    for (var i = 0; i < 10000; i = i + 1) {
+        klass.doSomething();
+    }
+}
+
+var batches = 0;
+var klass = Test();
+var now = clock();
+while ((clock() - now) < 10) {
+    doBatch(klass);
+    batches = batches + 1;
+}
+
+print "Number of batches:";
+print batches - 1;

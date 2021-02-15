@@ -1,5 +1,5 @@
-use super::value::{FunctionObject, ClassObject};
 use super::opcodes::OpCode;
+use super::value::FunctionObject;
 
 // compile-time constant types. these are converted to Value during runtime.
 #[derive(Clone, PartialEq)]
@@ -18,7 +18,7 @@ impl std::fmt::Display for Constant {
             Self::Function(fun) => match fun.name() {
                 Some(name) => f.write_fmt(format_args!("<fn {}>", name)),
                 None => f.write_str("<script>"),
-            }
+            },
             Self::Nil => f.write_str("nil"),
         }
     }
