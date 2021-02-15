@@ -50,10 +50,15 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         OpCode::SetLongProperty => {
             long_constant_instruction("OP_SET_LONG_PROPERTY", &chunk, offset)
         }
+        OpCode::GetSuper => constant_instruction("OP_GET_SUPER", &chunk, offset),
+        OpCode::GetLongSuper => long_constant_instruction("OP_GET_LONG_SUPER", &chunk, offset),
         OpCode::Invoke => invoke_instruction("OP_INVOKE", &chunk, offset),
         OpCode::LongInvoke => long_invoke_instruction("OP_LONG_INVOKE", &chunk, offset),
+        OpCode::SuperInvoke => invoke_instruction("OP_SUPER_INVOKE", &chunk, offset),
+        OpCode::LongSuperInvoke => long_invoke_instruction("OP_SUPER_INVOKE", &chunk, offset),
         OpCode::Method => constant_instruction("OP_METHOD", &chunk, offset),
         OpCode::LongMethod => long_constant_instruction("OP_LONG_METHOD", &chunk, offset),
+        OpCode::Inherit => simple_instruction("OP_INHERIT", offset),
         OpCode::Negate => simple_instruction("OP_NEGATE", offset),
         OpCode::Add => simple_instruction("OP_ADD", offset),
         OpCode::Subtract => simple_instruction("OP_SUBTRACT", offset),

@@ -146,7 +146,7 @@ impl CompilerState {
 }
 
 struct ClassCompilerState {
-    name: Token,
+    has_superclass: bool,
 }
 
 struct Compiler {
@@ -338,9 +338,31 @@ impl Compiler {
 
         self.define_variable(name_constant);
         let class_state = ClassCompilerState {
-            name: self.previous.clone(),
+            has_superclass: false,
         };
         self.class_stack.push(class_state);
+
+        if self.match_advance(TokenType::Less) {
+            self.consume(TokenType::Identifier, "Expected superclass name after '<'");
+            self.variable(false);
+            if self.previous.lexeme == name.lexeme {
+                self.error("A class cannot inherit from itself");
+            }
+
+            self.begin_scope();
+            self.state
+                .last_mut()
+                .unwrap()
+                .resolver
+                .add_local("super".to_string())
+                .unwrap();
+            self.define_variable(0);
+
+            self.named_variable(&name, false);
+            self.emit_opcode(OpCode::Inherit);
+            self.class_stack.last_mut().unwrap().has_superclass = true;
+        }
+
         self.named_variable(&name, false);
 
         self.consume(TokenType::LeftBrace, "Expected '{' before class body");
@@ -351,6 +373,11 @@ impl Compiler {
 
         self.consume(TokenType::RightBrace, "Expected '}' after class body");
         self.emit_opcode(OpCode::Pop);
+
+        if self.class_stack.last().unwrap().has_superclass {
+            self.end_scope();
+        }
+
         self.class_stack.pop();
     }
 
@@ -837,6 +864,62 @@ impl Compiler {
         self.variable(false);
     }
 
+    fn super_(&mut self, _: bool) {
+        if self.class_stack.is_empty() {
+            self.error("Cannot use 'super' outside of class");
+        } else if !self.class_stack.last().unwrap().has_superclass {
+            self.error("Cannot use 'super' in a class with no superclass");
+        }
+        self.consume(TokenType::Dot, "Expected '.' after 'super'");
+        self.consume(TokenType::Identifier, "Expected method name after 'super'");
+        let name = self.identifier_constant(&self.previous.clone());
+
+        self.named_variable(
+            &Token {
+                token_type: TokenType::This,
+                line: 0,
+                lexeme: "this".to_string(),
+            },
+            false,
+        );
+
+        if self.match_advance(TokenType::LeftParen) {
+            let arg_count = self.argument_list();
+            self.named_variable(
+                &Token {
+                    token_type: TokenType::Super,
+                    line: 0,
+                    lexeme: "super".to_string(),
+                },
+                false,
+            );
+            if name > u8::MAX as usize {
+                self.emit_opcode(OpCode::LongSuperInvoke);
+                self.emit_usize(name);
+            } else {
+                self.emit_opcode(OpCode::SuperInvoke);
+                self.emit_byte(name as u8);
+            }
+            self.emit_byte(arg_count);
+        } else {
+            self.named_variable(
+                &Token {
+                    token_type: TokenType::Super,
+                    line: 0,
+                    lexeme: "super".to_string(),
+                },
+                false,
+            );
+            if name > u8::MAX as usize {
+                self.emit_opcode(OpCode::GetLongSuper);
+                self.emit_usize(name);
+            } else {
+                self.emit_opcode(OpCode::GetSuper);
+                self.emit_byte(name as u8);
+            }
+        }
+    }
+
     fn resolve_upvalue(&mut self, name: &str, depth: usize) -> Option<isize> {
         if depth == 0 {
             // root level. we're looking at a global
@@ -978,6 +1061,7 @@ impl Compiler {
             TokenType::Or => ParseRule(None, Some(Self::or), Precedence::Or),
             TokenType::Dot => ParseRule(None, Some(Self::dot), Precedence::Call),
             TokenType::This => ParseRule(Some(Self::this), None, Precedence::None),
+            TokenType::Super => ParseRule(Some(Self::super_), None, Precedence::None),
             _ => ParseRule(None, None, Precedence::None),
         }
     }

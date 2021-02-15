@@ -35,6 +35,13 @@ pub enum OpCode {
 
     Invoke,
     LongInvoke,
+    Inherit,
+
+    GetSuper,
+    GetLongSuper,
+
+    SuperInvoke,
+    LongSuperInvoke,
 
     JumpIfFalse,
     Jump,

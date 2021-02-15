@@ -239,7 +239,6 @@ impl VM {
                             *val = stack_value;
                         }
                     }
-                    // TODO: this might not work because .clone() might duplicate the upvalue and render it useless!
                 }
                 OpCode::CloseUpvalue => {
                     let idx = self.stack.len() - 1;
@@ -394,6 +393,54 @@ impl VM {
                         return Err(InterpretError::RuntimeError);
                     }
                 }
+                OpCode::GetSuper => {
+                    let name = match self.read_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        }
+                        _ => unreachable!(
+                            "After property accesses there should only be string constants"
+                        ),
+                    };
+
+                    let superclass = if let Value::Class(class) = self.stack.pop().unwrap() {
+                        Rc::clone(&class)
+                    } else {
+                        unreachable!("We expect a class to be on the stack before GetSuper")
+                    };
+
+                    if !self.bind_method(superclass, &name) {
+                        self.runtime_error(
+                            format!("Undefined superclass method '{}'", name).as_str(),
+                        );
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::GetLongSuper => {
+                    let name = match self.read_long_constant() {
+                        Constant::String(s) => {
+                            let s = s.clone();
+                            self.allocate_string(s)
+                        }
+                        _ => unreachable!(
+                            "After property accesses there should only be string constants"
+                        ),
+                    };
+
+                    let superclass = if let Value::Class(class) = self.stack.pop().unwrap() {
+                        Rc::clone(&class)
+                    } else {
+                        unreachable!("We expect a class to be on the stack before GetSuper")
+                    };
+
+                    if !self.bind_method(superclass, &name) {
+                        self.runtime_error(
+                            format!("Undefined superclass method '{}'", name).as_str(),
+                        );
+                        return Err(InterpretError::RuntimeError);
+                    }
+                }
                 OpCode::GetLongProperty => {
                     let name = match self.read_long_constant() {
                         Constant::String(s) => {
@@ -462,6 +509,58 @@ impl VM {
                     } else {
                         self.runtime_error("Attempt to set property of non-instance object");
                         return Err(InterpretError::RuntimeError);
+                    }
+                }
+                OpCode::Inherit => {
+                    let superclass = self.peek_stack(1).unwrap();
+                    let subclass = self.peek_stack(0).unwrap();
+                    match (superclass, subclass) {
+                        (Value::Class(superclass), Value::Class(subclass)) => {
+                            for (key, value) in superclass.borrow().methods.iter() {
+                                subclass
+                                    .borrow_mut()
+                                    .methods
+                                    .insert(Rc::clone(key), value.clone());
+                            }
+                        }
+                        _ => {
+                            self.runtime_error("Attempt to inherit from non-class object");
+                            return Err(InterpretError::RuntimeError);
+                        }
+                    }
+                }
+                OpCode::SuperInvoke => {
+                    let name = self.read_constant();
+                    if let Constant::String(string) = name {
+                        let r = string.clone();
+                        let rc = self.allocate_string(r);
+                        let args = self.read_byte();
+                        let superclass = match self.stack.pop().unwrap() {
+                            Value::Class(c) => c,
+                            _ => unreachable!(
+                                "We expect to have a superclass on the stack when SuperInvoking"
+                            ),
+                        };
+                        self.invoke_from_class(superclass, rc, args)?;
+                    } else {
+                        unreachable!("We don't expect non-string constants after Invoke opcodes");
+                    }
+                }
+                OpCode::LongSuperInvoke => {
+                    let name = self.read_long_constant();
+                    if let Constant::String(string) = name {
+                        let r = string.clone();
+                        let rc = self.allocate_string(r);
+                        let args = self.read_byte();
+                        let superclass = match self.stack.pop().unwrap() {
+                            Value::Class(c) => c,
+                            _ => unreachable!(
+                                "We expect to have a superclass on the stack when SuperInvoking"
+                            ),
+                        };
+                        self.invoke_from_class(superclass, rc, args)?;
+                    } else {
+                        unreachable!("We don't expect non-string constants after Invoke opcodes");
                     }
                 }
                 OpCode::Constant => {
