@@ -34,3 +34,7 @@ Running the executable with no arguments will place you in a basic REPL session.
 If you supply the executable with a path to a Lox script, it will compile it and run it, printing any program output to stdout.
 
 If `CLOX_DEBUG=1` is set in the environment, the interpreter will log the disassembled compiled code and the instructions executed, along with the stack state at any given point.
+
+## Contributing
+
+This project is not maintained, and is not taking any contributions. However, feel free to inspect, fork and modify the code in any way you'd like.
